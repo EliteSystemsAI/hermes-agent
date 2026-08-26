@@ -399,6 +399,17 @@ def _raw_config_cache_clear() -> None:
     _RAW_CONFIG_CACHE.clear()
 
 
+def _apply_managed_scope_overlay(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply optional administrator-pinned config without loading the CLI stack."""
+    try:
+        from hermes_cli import managed_scope
+
+        return managed_scope.apply_managed_overlay(config)
+    except Exception as exc:
+        logger.debug("Could not apply managed skill config: %s", exc)
+        return config
+
+
 def _load_raw_config() -> Dict[str, Any]:
     """Read config.yaml with a shared mtime+size keyed cache.
 
@@ -408,7 +419,7 @@ def _load_raw_config() -> Dict[str, Any]:
     """
     config_path = get_config_path()
     if not config_path.exists():
-        return {}
+        return _apply_managed_scope_overlay({})
     try:
         stat = config_path.stat()
         cache_key = (str(config_path), stat.st_mtime_ns, stat.st_size)
@@ -418,20 +429,20 @@ def _load_raw_config() -> Dict[str, Any]:
     if cache_key is not None:
         cached = _RAW_CONFIG_CACHE.get(cache_key)
         if cached is not None:
-            return cached
+            return _apply_managed_scope_overlay(cached)
 
     try:
         parsed = yaml_load(config_path.read_text(encoding="utf-8"))
     except Exception as e:
         logger.debug("Could not read skill config %s: %s", config_path, e)
-        return {}
+        return _apply_managed_scope_overlay({})
     if not isinstance(parsed, dict):
-        return {}
+        return _apply_managed_scope_overlay({})
 
     if cache_key is not None:
         _RAW_CONFIG_CACHE.clear()
         _RAW_CONFIG_CACHE[cache_key] = parsed
-    return parsed
+    return _apply_managed_scope_overlay(parsed)
 
 
 # Skills that must stay available regardless of configuration. The
@@ -515,13 +526,27 @@ def _normalize_string_set(values) -> Set[str]:
 
 # ── External skills directories ──────────────────────────────────────────
 
-# (config_path_str, mtime_ns) -> resolved external dirs list.  Keyed by
-# mtime_ns so a config.yaml edit mid-run is picked up automatically;
-# otherwise every call would re-read + re-YAML-parse the 15KB config,
-# which becomes the dominant cost of ``hermes`` startup when ~120 skills
-# each trigger a category lookup during banner construction (10+ seconds
-# of pure waste).
-_EXTERNAL_DIRS_CACHE: Dict[Tuple[str, int], List[Path]] = {}
+# (user config path, mtime_ns, size, managed config path, mtime_ns, size)
+# -> resolved external dirs. Either policy layer may alter the result.
+_EXTERNAL_DIRS_CACHE: Dict[Tuple[str, int, int, str, int, int], List[Path]] = {}
+
+
+def _managed_config_cache_signature() -> Tuple[str, int, int]:
+    """Return Managed Scope config identity for external-dir cache invalidation."""
+    try:
+        from hermes_cli import managed_scope
+
+        managed_dir = managed_scope.get_managed_dir()
+        if managed_dir is None:
+            return "", 0, 0
+        managed_config = Path(managed_dir) / "config.yaml"
+        try:
+            stat = managed_config.stat()
+            return str(managed_config), stat.st_mtime_ns, stat.st_size
+        except OSError:
+            return str(managed_config), 0, 0
+    except Exception:
+        return "", 0, 0
 
 
 def _external_dirs_cache_clear() -> None:
@@ -543,22 +568,29 @@ def get_external_skills_dirs() -> List[Path]:
     when the cache is absent.
     """
     config_path = get_config_path()
-    if not config_path.exists():
-        return []
+    managed_path, managed_mtime_ns, managed_size = _managed_config_cache_signature()
 
-    # Cache key: (absolute path, mtime_ns).  stat() is ~2us vs ~85ms for
-    # the full YAML parse, so the fast path is nearly free.
+    # The cache must honor both the profile config and administrator-pinned
+    # Managed Scope config. A missing user config is valid when scope supplies
+    # the external directory.
     try:
         stat = config_path.stat()
-        cache_key: Tuple[str, int] = (str(config_path), stat.st_mtime_ns)
+        user_mtime_ns, user_size = stat.st_mtime_ns, stat.st_size
     except OSError:
-        cache_key = None  # type: ignore[assignment]
+        user_mtime_ns, user_size = 0, 0
+    cache_key: Tuple[str, int, int, str, int, int] = (
+        str(config_path),
+        user_mtime_ns,
+        user_size,
+        managed_path,
+        managed_mtime_ns,
+        managed_size,
+    )
 
-    if cache_key is not None:
-        cached = _EXTERNAL_DIRS_CACHE.get(cache_key)
-        if cached is not None:
-            # Return a copy so callers can't mutate the cached list.
-            return list(cached)
+    cached = _EXTERNAL_DIRS_CACHE.get(cache_key)
+    if cached is not None:
+        # Return a copy so callers can't mutate the cached list.
+        return list(cached)
 
     parsed = _load_raw_config()
     if not parsed:

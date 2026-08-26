@@ -110,3 +110,50 @@ def test_cache_key_is_per_config_path(tmp_path, monkeypatch):
     # And switching back still works — both entries coexist in the cache.
     monkeypatch.setenv("HERMES_HOME", str(home_a))
     assert get_external_skills_dirs() == [ext_a.resolve()]
+
+
+def test_managed_scope_overrides_external_dirs_and_invalidates_cache(tmp_path, monkeypatch):
+    """Administrator-managed external roots win and update the cache."""
+    from hermes_cli import managed_scope
+
+    home = tmp_path / "home"
+    home.mkdir()
+    user_external = tmp_path / "user-external"
+    user_external.mkdir()
+    (home / "config.yaml").write_text(
+        f"skills:\n  external_dirs:\n    - {user_external}\n", encoding="utf-8"
+    )
+
+    managed = tmp_path / "managed"
+    managed.mkdir()
+    managed_external = tmp_path / "managed-external"
+    managed_external.mkdir()
+    replacement_external = tmp_path / "managed-replacement"
+    replacement_external.mkdir()
+
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_MANAGED_DIR", str(managed))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    managed_scope.invalidate_managed_cache()
+    _external_dirs_cache_clear()
+    try:
+        assert get_external_skills_dirs() == [user_external.resolve()]
+
+        managed_config = managed / "config.yaml"
+        managed_config.write_text(
+            f"skills:\n  external_dirs:\n    - {managed_external}\n", encoding="utf-8"
+        )
+        managed_scope.invalidate_managed_cache()
+        assert get_external_skills_dirs() == [managed_external.resolve()]
+
+        managed_config.write_text(
+            f"skills:\n  external_dirs:\n    - {replacement_external}\n", encoding="utf-8"
+        )
+        stat = managed_config.stat()
+        future = stat.st_atime + 10
+        os.utime(managed_config, (future, future))
+        managed_scope.invalidate_managed_cache()
+        assert get_external_skills_dirs() == [replacement_external.resolve()]
+    finally:
+        _external_dirs_cache_clear()
+        managed_scope.invalidate_managed_cache()
