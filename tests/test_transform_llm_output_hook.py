@@ -15,12 +15,34 @@ Mirrors ``test_transform_tool_result_hook.py`` which tests the equivalent
 contract for the generic tool-result seam.
 """
 
+import inspect
 from pathlib import Path
 
 import yaml
 
 import hermes_cli.plugins as plugins_mod
 from hermes_cli.plugins import PluginManager, VALID_HOOKS
+
+
+def test_runtime_forwards_stable_route_and_turn_metadata_to_plugin_hooks():
+    """Gateway plugins must not have to infer a topic from a transcript UUID."""
+    from agent.turn_context import build_turn_context
+    from agent.turn_finalizer import finalize_turn
+
+    pre_source = inspect.getsource(build_turn_context)
+    final_source = inspect.getsource(finalize_turn)
+
+    assert 'gateway_session_key=getattr(agent, "_gateway_session_key"' in pre_source
+    transform_block = final_source.split(
+        '"transform_llm_output"', 1
+    )[1].split("# Plugin hook: post_llm_call", 1)[0]
+    for field in (
+        "task_id=effective_task_id",
+        "turn_id=turn_id",
+        "user_message=original_user_message",
+        'gateway_session_key=getattr(agent, "_gateway_session_key"',
+    ):
+        assert field in transform_block
 
 
 def _make_enabled_plugin(hermes_home: Path, name: str, register_body: str) -> Path:
