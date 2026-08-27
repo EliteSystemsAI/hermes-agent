@@ -601,8 +601,12 @@ def finalize_turn(
                 "transform_llm_output",
                 response_text=final_response,
                 session_id=agent.session_id or "",
+                task_id=effective_task_id,
+                turn_id=turn_id,
+                user_message=original_user_message,
                 model=agent.model,
                 platform=getattr(agent, "platform", None) or "",
+                gateway_session_key=getattr(agent, "_gateway_session_key", None) or "",
             )
             for _hook_result in _transform_results:
                 if isinstance(_hook_result, str) and _hook_result:
@@ -630,6 +634,7 @@ def finalize_turn(
                 conversation_history=list(messages),
                 model=agent.model,
                 platform=getattr(agent, "platform", None) or "",
+                gateway_session_key=getattr(agent, "_gateway_session_key", None) or "",
             )
         except Exception as exc:
             logger.warning("post_llm_call hook failed: %s", exc)
