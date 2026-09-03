@@ -3026,6 +3026,11 @@ class BasePlatformAdapter(ABC):
         self._fatal_error_message: Optional[str] = None
         self._fatal_error_retryable = True
         self._fatal_error_handler: Optional[Callable[["BasePlatformAdapter"], Awaitable[None] | None]] = None
+        # The primary adapter reports under its bare platform name. A
+        # multiplexed secondary is rebound by GatewayRunner to
+        # ``profile:platform`` so its lifecycle cannot overwrite primary
+        # transport health in the process-level gateway_state.json.
+        self._runtime_status_key = platform.value
         # Strong references to shielded fatal-error handler tasks that outlive
         # their carrier task (asyncio only keeps weak refs). Without this set,
         # the event loop can GC the detached handler before it finishes — the
@@ -3420,6 +3425,13 @@ class BasePlatformAdapter(ABC):
     def set_fatal_error_handler(self, handler: Callable[["BasePlatformAdapter"], Awaitable[None] | None]) -> None:
         self._fatal_error_handler = handler
 
+    def set_runtime_status_key(self, key: str) -> None:
+        """Bind runtime health writes to this adapter's multiplex identity."""
+        value = str(key or "").strip().lower()
+        if not value or any(character.isspace() for character in value):
+            raise ValueError("runtime status key must be a non-empty token")
+        self._runtime_status_key = value
+
     def _mark_connected(self) -> None:
         self._running = True
         self._fatal_error_code = None
@@ -3451,7 +3463,8 @@ class BasePlatformAdapter(ABC):
         """
         try:
             from gateway.status import write_runtime_status
-            write_runtime_status(platform=self.platform.value, **kwargs)
+            status_key = getattr(self, "_runtime_status_key", self.platform.value)
+            write_runtime_status(platform=status_key, **kwargs)
         except Exception as exc:
             # Use getattr so object.__new__(...) test harnesses that skip __init__
             # don't blow up on attribute access.
@@ -3462,7 +3475,8 @@ class BasePlatformAdapter(ABC):
                     self._status_write_logged = logged
                 except Exception:
                     pass
-            key = (self.platform.value, context)
+            status_key = getattr(self, "_runtime_status_key", self.platform.value)
+            key = (status_key, context)
             if key not in logged:
                 logger.warning(
                     "Failed to write runtime status (%s) for %s: %s (further failures at debug level)",

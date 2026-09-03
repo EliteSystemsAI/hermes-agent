@@ -76,6 +76,22 @@ def _adapter() -> _ProfileAdapter:
     return adapter
 
 
+def test_secondary_platform_health_cannot_overwrite_primary_status(monkeypatch):
+    writes = []
+    monkeypatch.setattr(
+        "gateway.status.write_runtime_status",
+        lambda **payload: writes.append(payload),
+    )
+    runner = _runner()
+    adapter = _adapter()
+
+    runner._configure_profile_adapter(adapter, "research", Platform.TELEGRAM)
+    adapter._set_fatal_error("missing_token", "profile token missing", retryable=False)
+
+    assert writes[-1]["platform"] == "research:telegram"
+    assert writes[-1]["platform_state"] == "fatal"
+
+
 async def _load_profile_snapshot(
     runner: GatewayRunner,
     profile_home,
