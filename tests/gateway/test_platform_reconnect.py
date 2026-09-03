@@ -215,6 +215,26 @@ class TestPlatformReconnectWatcher:
         )
 
     @pytest.mark.asyncio
+    async def test_planned_restart_initial_connect_preserves_platform_queue(
+        self, tmp_path, monkeypatch
+    ):
+        """A replacement process must not drop updates queued during restart."""
+        runner = _make_runner()
+        runner._platform_lock_takeover_on_start = False
+        adapter = StubAdapter(succeed=True)
+        marker = tmp_path / ".restart_pending.json"
+        marker.write_text('{"requested_at": 1}', encoding="utf-8")
+
+        monkeypatch.setattr("gateway.run._hermes_home", tmp_path)
+
+        success = await runner._connect_initial_adapter_with_timeout(
+            adapter, Platform.TELEGRAM
+        )
+
+        assert success is True
+        assert adapter.connect_calls == [True]
+
+    @pytest.mark.asyncio
     async def test_reconnect_retries_resume_pending_for_platform(self):
         """A successful reconnect retries the startup auto-resume scoped to
         that platform.

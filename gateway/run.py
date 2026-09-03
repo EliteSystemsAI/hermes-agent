@@ -1867,6 +1867,18 @@ def _planned_restart_notification_pending() -> bool:
     return _planned_restart_notification_path().exists()
 
 
+def _planned_restart_queue_preservation_pending() -> bool:
+    """Return True when this boot replaces a deliberately stopped gateway.
+
+    A planned restart is operationally a reconnect, even though the replacement
+    gateway is a new process.  Treating it as a cold first boot makes queue-backed
+    adapters such as Telegram discard messages received during the restart
+    window.  The existing one-shot restart marker bridges that process boundary;
+    it is cleared by the normal startup notification path after adapters connect.
+    """
+    return _planned_restart_notification_path().exists()
+
+
 def _clear_planned_restart_notification() -> None:
     _planned_restart_notification_path().unlink(missing_ok=True)
 
@@ -7279,13 +7291,21 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         Reconnects call ``_connect_adapter_with_timeout`` directly and adapters
         also default to deny, so a later network recovery can never evict a
         healthy token holder.
+
+        A replacement process started after a planned stop is not a true cold
+        boot.  In that case the durable restart marker makes the initial connect
+        use reconnect semantics so Telegram and other queue-backed platforms do
+        not discard messages that arrived while the old process was draining.
         """
         adapter._platform_lock_takeover_allowed = bool(
             self._platform_lock_takeover_on_start
         )
         try:
             return await self._connect_adapter_with_timeout(
-                adapter, platform, initial=True
+                adapter,
+                platform,
+                is_reconnect=_planned_restart_queue_preservation_pending(),
+                initial=True,
             )
         finally:
             adapter._platform_lock_takeover_allowed = False
