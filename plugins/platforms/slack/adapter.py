@@ -2396,6 +2396,23 @@ class SlackAdapter(BasePlatformAdapter):
         """Scope Slack's workspace-local event/message ids for deduplication."""
         return f"{team_id}:{event_id}" if team_id else str(event_id)
 
+    def _inbound_message_dedup_id(self, event: dict, team_id: str, event_ts: str) -> str:
+        """Identify one channel message across Slack Connect workspace deliveries.
+
+        DMs keep workspace scope because their channel IDs are local to a team.
+        An edit uses its own event timestamp, so an edit of an ignored message
+        can still summon the bot. A reply uses its own message timestamp, not
+        just the thread root, so later replies in the same thread still run.
+        """
+        channel = str(event.get("channel") or "")
+        if not channel or event.get("channel_type") in {"im", "mpim"} or channel.startswith("D"):
+            return self._workspace_event_id(team_id, event_ts)
+        message_ts = str(event.get("ts") or "")
+        parent = str(event.get("thread_ts") or "")
+        if parent == message_ts:
+            parent = ""
+        return f"channel:{channel}:{parent}:{event_ts}"
+
     @staticmethod
     def _workspace_message_marker(team_id: str, message_id: str) -> Any:
         """Return an in-memory routing marker without changing legacy no-team tests."""
@@ -5581,8 +5598,11 @@ class SlackAdapter(BasePlatformAdapter):
         # If it does, _handle_slack_message records the same share ts and this
         # fallback skips instead of duplicating the user turn.
         await asyncio.sleep(0.75)
-        if ts and self._dedup.is_duplicate(
-            self._workspace_event_id(team_id, ts)
+        if ts and self._dedup.contains(
+            self._inbound_message_dedup_id(
+                {"channel": channel_id, "thread_ts": thread_ts,
+                 "ts": ts, "channel_type": "im" if channel_id.startswith("D") else "channel"},
+                team_id, ts)
         ):
             return
 
@@ -5594,7 +5614,7 @@ class SlackAdapter(BasePlatformAdapter):
             "channel": channel_id,
             "channel_type": "im" if channel_id.startswith("D") else "channel",
             "team": team_id,
-            "ts": "",  # already recorded above; avoid tripping our own dedup guard
+            "ts": ts,
             "files": [file_obj],
         }
         if thread_ts and thread_ts != ts:
@@ -5804,16 +5824,7 @@ class SlackAdapter(BasePlatformAdapter):
                 normalized_event["_slack_changed_event_ts"] = changed_event_ts
             event = normalized_event
 
-        # Dedup: Slack Socket Mode can redeliver events after reconnects (#4777)
-        # Scope the dedup id by workspace: Slack event ts values are only
-        # unique within one workspace, so two teams' events with the same ts
-        # must not suppress each other.
-        event_ts = event.get("_slack_changed_event_ts") or event.get("ts", "")
         dedup_team_id = self._event_team_id(event, payload)
-        if event_ts and self._dedup.is_duplicate(
-            self._workspace_event_id(dedup_team_id, event_ts)
-        ):
-            return
 
         channel_id = event.get("channel", "")
         if self._is_ignored_channel(channel_id):
@@ -6236,6 +6247,14 @@ class SlackAdapter(BasePlatformAdapter):
                     chat_type="dm" if is_dm else "group",
                 ):
                     return
+
+        # Mark only a copy that passed routing. An unaddressed workspace copy
+        # must not suppress the copy that mentions this workspace's bot.
+        event_ts = event.get("_slack_changed_event_ts") or event.get("ts", "")
+        if event_ts and self._dedup.is_duplicate(
+            self._inbound_message_dedup_id(event, team_id, event_ts)
+        ):
+            return
 
         if is_mentioned:
             # Strip the bot mention from the text
