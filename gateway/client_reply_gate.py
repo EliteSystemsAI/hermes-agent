@@ -28,12 +28,13 @@ CLIENT_CHANNEL_IDS = frozenset({
 })
 DOCUMENT_SUFFIXES = frozenset({".csv", ".pdf", ".txt", ".docx", ".xlsx"})
 _INTERNAL = re.compile(
-    r"\b(?:ELI-\d+|kanban|Linear|ACP|tool[ -]?call|shell|terminal|"
+    r"\b(?:ELI-\d+|kanban|Linear|tool[ -]?call|"
+    r"(?:ACP|shell|terminal)\s+(?:tool|command|session|format|output)|"
     r"config\.ya?ml|SOUL\.md|session[_ -]?key|stack trace|traceback|"
-    r"webhook|API endpoint|job\s*(?:id|number)\s*[:#]?\s*\d+)\b|"
-    r"\b[CDGU][A-Z0-9]{10,}\b|"
+    r"webhook|API endpoint|job\s*(?:(?:id|number)\s*)?[:#]?\s*\d{3,})\b|"
+    r"\b[CDGTU][A-Z0-9]{10,}\b|"
     r"(?:/(?:opt|home|tmp|var)/[^\s]+)|"
-    r"(?<!\w)(?:\.{1,2}/|[A-Za-z0-9_.-]+/)[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8}\b",
+    r"(?<!\w)(?:\.{1,2}/|[A-Za-z0-9_.-]+/)[A-Za-z0-9_./-]+\b",
     re.IGNORECASE,
 )
 _NARRATION = re.compile(
@@ -42,6 +43,7 @@ _NARRATION = re.compile(
     r"checking (?:my |the )?(?:tools|logs|internal status)|"
     r"running (?:a |the )?(?:check|tool|command)|"
     r"switching to|using (?:the |a )?(?:local |ACP |shell |tool)|"
+    r"(?:the |a )?(?:shell |ACP )?tool (?:returned|reported|found)|"
     r"(?:i am|i'm|we are|we're) (?:checking|running|working|retrying|loading)|"
     r"redirected current run|interrupting current task|"
     r"(?:the )?(?:current )?(?:run|task) (?:was |is )?(?:redirected|interrupted))\b",
@@ -50,7 +52,8 @@ _NARRATION = re.compile(
 _STATUS = re.compile(
     r"(?:\b(?:status|progress)\s*:|\b(?:still working|working (?:on|through) (?:it|this|that)|"
     r"in progress|processing your|queued for|waiting for (?:a |the )?(?:tool|model|run)|"
-    r"current run|current task)\b)",
+    r"current run|current task|looking into (?:that|this|it) now|"
+    r"on it[,!. ]+back shortly)\b)",
     re.IGNORECASE,
 )
 _FILE_CLAIM = re.compile(

@@ -132,6 +132,28 @@ def test_chat_completion_finalizer_forces_tool_choice_none():
     assert agent.kwargs["tool_choice"] == "none"
 
 
+def test_legend_client_prompt_includes_source_bound_handoff_contract():
+    from gateway.run_turn_runner import TurnRunner
+
+    ctx = _ctx()
+    ctx.context_prompt = "Legend live profile context"
+    ctx.channel_prompt = ("CLIENT COMMUNICATION STANDARD. Answer the actual question first "
+                          "in everyday words. One natural reply, usually 1-3 short sentences.")
+    ctx.source.thread_id = "171.000"
+    runner = SimpleNamespace(_ctx=ctx, _runner=SimpleNamespace(
+        _get_system_prompt_for_channel=lambda *args, **kwargs: "DNC channel override"))
+    prompt = TurnRunner._combined_ephemeral_prompt(runner)
+    assert "Legend live profile context" in prompt
+    assert ctx.channel_prompt in prompt
+    assert "DNC channel override" in prompt
+    assert "CLIENT REPLY HANDOFF" in prompt
+    assert 'source_channel to "C0BP7GGCEAK"' in prompt
+    assert 'inbound_ts to "171.001"' in prompt
+    assert "successful tool result from this turn" in prompt
+    assert "prior turns, failed tools" in prompt
+    assert "The gateway, not you" in prompt
+
+
 def test_bedrock_finalizer_builds_real_converse_kwargs_without_tools():
     from agent.transports.bedrock import BedrockTransport
 

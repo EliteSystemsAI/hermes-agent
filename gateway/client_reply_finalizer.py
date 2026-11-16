@@ -117,6 +117,30 @@ _SYSTEM = (
 )
 
 
+def client_reply_handoff_prompt(channel_id: str, inbound_ts: str | None) -> str:
+    """Tell intake the exact checked packet it must return before client delivery."""
+    if not inbound_ts:
+        return "Client reply is held because the inbound message identity is missing."
+    return (
+        "CLIENT REPLY HANDOFF. You may use tools to investigate, but your final output must be "
+        "one JSON object with key client_reply_handoff, no prose or markdown. The gateway, not you, "
+        "writes the client reply. Set source_channel to " + json.dumps(channel_id) +
+        " and inbound_ts to " + json.dumps(str(inbound_ts)) + ". "
+        "Include facts as at most eight objects {source_ref, quote}. Each quote must be an exact "
+        "excerpt of this inbound client message (source_ref client_message) or a successful tool "
+        "result from this turn (source_ref is that result's tool_call_id). Do not use memory, "
+        "prior turns, failed tools, or inferred facts as evidence. Include next_action and "
+        "confirmed_time as the same evidence object or null. Use null when unverified; do not "
+        "promise a time from intent alone. Include attachment as null unless a successful tool "
+        "result from this turn names an already staged local document; then use "
+        "{path, type, size, source_ref} with its absolute path, suffix type, exact byte size, "
+        "and tool_call_id. Set facts to [] if none are verified. Example shape: "
+        '{"client_reply_handoff":{"source_channel":"CHANNEL","inbound_ts":"TS",'
+        '"facts":[],"next_action":null,"confirmed_time":null,"attachment":null}}. '
+        "Never put a proposed client sentence, internal status, or target answer in this packet."
+    )
+
+
 def _no_tools_candidate(agent: Any, packet: dict) -> str:
     """Use the current provider transport without exposing tools or executing tool calls."""
     messages = [

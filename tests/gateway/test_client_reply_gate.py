@@ -93,10 +93,24 @@ def test_final_text_rejections(text, reason):
     "Interrupting current task.",
     "Status: still working on it.",
     "Your request is queued for processing.",
+    "Looking into that now.",
+    "On it, back shortly.",
+    "The tool returned 540.",
+    "Job 44821 is running.",
+    "The workspace is T0BQMT61XHR.",
+    "I saved docs/tender for you.",
 ])
 def test_grok_exact_internal_narration_examples_are_blocked(text):
     assert gate.final_reply_violation(text, has_attachment=False) in {
         "work_narration", "internal_detail"}
+
+
+@pytest.mark.parametrize("text", [
+    "The shell of the building is intact.",
+    "The ACP panel is included in the drawing.",
+])
+def test_client_subject_words_are_not_internal_details(text):
+    assert gate.final_reply_violation(text, has_attachment=False) is None
 
 
 def test_explicit_detail_request_allows_long_reply():

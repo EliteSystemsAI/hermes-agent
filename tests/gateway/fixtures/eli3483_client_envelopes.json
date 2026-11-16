@@ -1,0 +1,58 @@
+[
+  {
+    "case": "dnc_tender_email_status",
+    "channel_id": "C0BP7GGCEAK",
+    "message_ts": "1794777310.772859",
+    "thread_parent": "1794777310.772859",
+    "text": "good morning team, <@U0BJFNEDG1X> how did we go with producing the tenders replied to by email?"
+  },
+  {
+    "case": "dnc_view_package",
+    "channel_id": "C0BP7GGCEAK",
+    "message_ts": "1794777780.906639",
+    "thread_parent": "1794777310.772859",
+    "text": "perfect thats great. i have not gotten an email or been sent the package for the workings/tender. how am i have to view this <@U0BJFNEDG1X>"
+  },
+  {
+    "case": "dnc_email_preference",
+    "channel_id": "C0BP7GGCEAK",
+    "message_ts": "1794796954.216119",
+    "thread_parent": "1794777310.772859",
+    "text": "Yes I think an email would be better"
+  },
+  {
+    "case": "claimsafe_stale_task_notice",
+    "channel_id": "C09KQBU5RPW",
+    "message_ts": "1794783105.815959",
+    "thread_parent": "1794783105.815959",
+    "text": "hermes is still saying this even though it has finished a task"
+  },
+  {
+    "case": "claimsafe_stop_auto_triage",
+    "channel_id": "C09KQBU5RPW",
+    "message_ts": "1794789362.043009",
+    "thread_parent": "1794783105.815959",
+    "text": "<@U0BJFNEDG1X> I need you to help stop the auto triaging because it is pulling jobs from last week I had to do manually "
+  },
+  {
+    "case": "claimsafe_facebook_and_texts",
+    "channel_id": "C09KQBU5RPW",
+    "message_ts": "1794431498.908479",
+    "thread_parent": "1794431498.908479",
+    "text": "<@U0BJFNEDG1X> can you please check why the communication agent is saying it can't send messages on my priv facebook \n\nCan you also please check why it won't access my text messages still\nUnless I click approvals on the computer "
+  },
+  {
+    "case": "healtheboy_csv_export",
+    "channel_id": "C09KLRPP1PC",
+    "message_ts": "1794438434.929809",
+    "thread_parent": "1794436328.731319",
+    "text": "<@U09KCRR9TGT> no stress mate, all good.\n\nCould you send over an export of all the tickets you have in Linear for HTB please and I can go through it today and see what makes sense for you to finish up on your end and what we will take over on our end? A CSV export is perfect.\n\nThanks"
+  },
+  {
+    "case": "platypus_openai_topups",
+    "channel_id": "C09KEPSR0Q3",
+    "message_ts": "1793661940.723319",
+    "thread_parent": "1793661940.723319",
+    "text": "Morning <@U09KCRR9TGT> <@U0BJFNEDG1X> , we had our OpenAI account get funded 4 x $5 between 5:30pm - 7:30pm yesterday, which is an unusually high usage amount (usually it only needs about $5 per month), so I'm wondering why that would be? Was there some type of testing happening that used the credits?"
+  }
+]

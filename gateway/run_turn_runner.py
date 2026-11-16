@@ -1179,17 +1179,23 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         from gateway.session_api_turn import api_execution
         api = api_execution.get()
         if api is not None:
-            return api['settings'].get('ephemeral_system_prompt') or ''
-        combined = ctx.context_prompt or ""
-        for extra in (
-            (ctx.channel_prompt or "").strip(),
-            self._runner._get_system_prompt_for_channel(
-                ctx.source.platform, ctx.source.chat_id or "", thread_id=getattr(ctx.source, "thread_id", None),
-                parent_id=getattr(ctx.source, "parent_chat_id", None),
-            ),
-        ):
-            if extra:
-                combined = (combined + "\n\n" + extra).strip()
+            combined = api['settings'].get('ephemeral_system_prompt') or ''
+        else:
+            combined = ctx.context_prompt or ""
+            for extra in (
+                (ctx.channel_prompt or "").strip(),
+                self._runner._get_system_prompt_for_channel(
+                    ctx.source.platform, ctx.source.chat_id or "", thread_id=getattr(ctx.source, "thread_id", None),
+                    parent_id=getattr(ctx.source, "parent_chat_id", None),
+                ),
+            ):
+                if extra:
+                    combined = (combined + "\n\n" + extra).strip()
+        from gateway.client_reply_gate import is_client_reply_channel
+        if is_client_reply_channel(ctx.source, ctx.channel_prompt):
+            from gateway.client_reply_finalizer import client_reply_handoff_prompt
+            combined = (combined + "\n\n" + client_reply_handoff_prompt(
+                ctx.source.chat_id, ctx.inbound_message_id)).strip()
         return combined
 
     def _append_auto_media_tags(self, final_response: str, result, agent_history, history_media_paths) -> str:
