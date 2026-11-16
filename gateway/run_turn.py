@@ -255,6 +255,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
                 run_generation=run_generation, event_message_id=self._reply_anchor_for_event(event),
                 inbound_message_id=str(event.message_id) if event.message_id else None,
                 channel_prompt=_turn_channel_prompt, moa_config=getattr(event, "_moa_config", None),
+                client_message=event.text,
                 title_user_message=prepared.title_user_message,
                 persist_user_message=prepared.persist_user_message,
                 persist_user_timestamp=prepared.persist_user_timestamp,
@@ -273,6 +274,10 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
             # message's id or it collides with an earlier turn's row carrying the same text. Reply
             # routing is untouched: the anchor still comes from this event.
             if isinstance(agent_result, dict):
+                event._client_reply_finalized = agent_result.get("client_reply_finalized") is True
+                event._client_reply_manifest_file_path = agent_result.get("client_reply_manifest_file_path")
+                event._client_reply_detail_requested = agent_result.get("client_reply_detail_requested") is True
+                event._client_reply_final_text = agent_result.get("client_reply_final_text")
                 _terminal_inbound = agent_result.get("queued_terminal_inbound_id")
                 if _terminal_inbound:
                     event.ledger_message_id = str(_terminal_inbound)
@@ -625,8 +630,12 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
     def _proxy_error_result(text: str) -> dict[str, Any]:
         return {"final_response": text, "messages": [], "api_calls": 0, "tools": []}
 
-    def _proxy_stream_consumer(self, source: SessionSource, event_message_id, _thread_metadata, _run_still_current):
+    def _proxy_stream_consumer(self, source: SessionSource, event_message_id, _thread_metadata, _run_still_current,
+                               channel_prompt: str | None = None):
         """Platform stream consumer for the proxy path when streaming is enabled, else ``None``."""
+        from gateway.client_reply_gate import is_client_reply_channel
+        if is_client_reply_channel(source, channel_prompt):
+            return None
         from gateway.run import _load_gateway_config, _platform_config_key
         _scfg = getattr(getattr(self, "config", None), "streaming", None)
         # #60671 — streaming TTS consumer is created on the outer event-loop thread before run_sync
@@ -663,7 +672,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         self, message: str, context_prompt: str, history: list[dict[str, Any]],
         source: SessionSource, session_id: str, session_key: str | None = None,
         run_generation: Optional[int] = None, event_message_id: Optional[str] = None,
-        scheduled_heartbeat: bool = False,
+        scheduled_heartbeat: bool = False, channel_prompt: str | None = None,
     ) -> dict[str, Any]:
         """Forward the message to a remote Hermes API server instead of running a local AIAgent.
 
@@ -719,7 +728,8 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         _thread_metadata: Optional[dict[str, Any]] = self._thread_metadata_for_source(source, event_message_id)
         _stream_consumer = (
             None if scheduled_heartbeat
-            else self._proxy_stream_consumer(source, event_message_id, _thread_metadata, _run_still_current)
+            else self._proxy_stream_consumer(source, event_message_id, _thread_metadata, _run_still_current,
+                                             channel_prompt)
         )
         stream_task = asyncio.create_task(_stream_consumer.run()) if _stream_consumer else None
 
@@ -1130,6 +1140,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
     def _run_agent_start_streaming_tts(
         self, source: SessionSource, message_type: Optional[str],
         _status_thread_metadata: Optional[dict[str, Any]], streaming_tts_consumer_holder: list,
+        channel_prompt: str | None = None,
     ) -> None:
         """Start the streaming-TTS consumer for a voice-input turn on an auto-TTS chat.
 
@@ -1139,6 +1150,9 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         # This avoids a cross-scope NameError: the outer interrupt / finalisation paths reference the
         # consumer via ``streaming_tts_consumer_holder[0]``. Gates: voice input, auto-TTS enabled for this
         # chat, adapter supports streaming, and a usable streaming TTS provider configured. See #60671.
+        from gateway.client_reply_gate import is_client_reply_channel
+        if is_client_reply_channel(source, channel_prompt):
+            return
         _stts_adapter = self._delivery_adapter_for(source)
         _is_voice_input = (
             message_type is not None
@@ -1288,11 +1302,12 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
             )
 
     @staticmethod
-    def _run_agent_stream_confirmed_final_delivery(consumer, final_text: str, *, previewed: bool = False) -> bool:
+    def _run_agent_stream_confirmed_final_delivery(consumer, final_text: str, *, previewed: bool = False,
+                                                   client_reply_gate: bool = False) -> bool:
         """True only when the actual final reply reached the user: a finalize call may carry only the
         last preview snapshot, so reconcile against the recorded payload — a demonstrable mismatch
         (False) overrides the flag; None keeps legacy trust."""
-        if consumer is None:
+        if client_reply_gate or consumer is None:
             return False
         if getattr(consumer, "final_response_sent", False):
             matcher = getattr(consumer, "delivered_final_matches", None)
@@ -1602,6 +1617,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         self, turn_ctx: TurnContext, adapter: Any, response: Any, result: Any, stream_task: Any,
     ) -> None:
         """Deliver the first response before a queued follow-up runs, unless streaming already did."""
+        from gateway.client_reply_gate import is_client_reply_channel
         if turn_ctx.mute_notification_reply:
             return
         session_key = turn_ctx.session_key
@@ -1616,6 +1632,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         first_response = _delivery_result.get("final_response", "")
         _already_streamed = self._run_agent_stream_confirmed_final_delivery(
             _sc, first_response, previewed=bool(_delivery_result.get("response_previewed")),
+            client_reply_gate=is_client_reply_channel(turn_ctx.source, getattr(turn_ctx, "channel_prompt", None)),
         )
         # Same silence predicate as the normal path, else this branch leaks the literal marker.
         _silent = False
@@ -1656,6 +1673,11 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
                     # The text send records a delivery-ledger obligation under this key, keyed on
                     # the raw inbound id (the anchor above is only the reply target).
                     session_key=session_key, inbound_message_id=turn_ctx.inbound_message_id,
+                    channel_prompt=getattr(turn_ctx, "channel_prompt", None), reply_expected=turn_ctx.reply_expected,
+                    inbound_text=turn_ctx.message,
+                    client_finalized=_delivery_result.get("client_reply_finalized") is True,
+                    client_manifest_file_path=_delivery_result.get("client_reply_manifest_file_path"),
+                    client_final_text=_delivery_result.get("client_reply_final_text"),
                 )
             except Exception as e:
                 logger.warning("Failed to send first response before queued message: %s", e)
@@ -1806,6 +1828,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
                 run_generation=run_generation, _interrupt_depth=_interrupt_depth + 1,
                 event_message_id=next_message_id, inbound_message_id=next_inbound_id,
                 channel_prompt=next_channel_prompt, message_type=next_message_type,
+                client_message=getattr(pending_event, "text", None),
                 persist_user_message=next_persist_message,
                 persist_user_display_kind=next_display_kind,
                 reply_expected=next_reply_expected,
@@ -1914,8 +1937,11 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         Never when the agent failed (unseen error), on "(empty)", or on a finite (`-z`, `chat -q`) turn:
         its viewer prints only the completion text, never the deltas (#139666). Both flags reflect call
         success, not content: a mismatch with the recorded turn-final payload never suppresses."""
+        from gateway.client_reply_gate import is_client_reply_channel
         from gateway.session_finite import finite_turn_required
         _sc, source, session_key = turn_ctx.stream_consumer_holder[0], turn_ctx.source, turn_ctx.session_key
+        if is_client_reply_channel(source, getattr(turn_ctx, "channel_prompt", None)):
+            return
         if not isinstance(response, dict) or response.get("failed") or finite_turn_required() is True:
             return
         _final = response.get("final_response") or ""
@@ -2135,6 +2161,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         run_generation: Optional[int] = None, _interrupt_depth: int = 0,
         event_message_id: Optional[str] = None, inbound_message_id: Optional[str] = None,
         channel_prompt: Optional[str] = None, moa_config: Optional[dict] = None,
+        client_message: Optional[str] = None,
         persist_user_message: Optional[Any] = None, persist_user_timestamp: Optional[float] = None,
         persist_user_display_kind: Optional[str] = None, message_type: Optional[str] = None,
         persist_user_display_metadata: Optional[dict] = None,
@@ -2150,6 +2177,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
                 message=message, context_prompt=context_prompt, history=history, source=source,
                 session_id=session_id, session_key=session_key, run_generation=run_generation,
                 event_message_id=event_message_id, scheduled_heartbeat=scheduled_heartbeat,
+                channel_prompt=channel_prompt,
             )
             # The remote turn is this admission's executed turn (``TurnRunner.run_sync`` records
             # the local one): without it a finite run would settle as a no-execution refusal.
@@ -2162,6 +2190,14 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         from run_agent import AIAgent
 
         disp = await asyncio.to_thread(self._run_agent_display_settings, source)  # auth lock + config I/O; scope rides the copied context
+        from gateway.client_reply_gate import is_client_reply_channel
+        client_reply = is_client_reply_channel(source, channel_prompt)
+        if client_reply:
+            disp = dataclasses.replace(
+                disp, progress_mode="off", _live_status_mode="off", tool_progress_enabled=False,
+                interim_assistant_messages_enabled=False, _thinking_enabled=False,
+                _native_slack_task_cards=False, needs_progress_queue=False,
+            )
         if scheduled_heartbeat:
             # A heartbeat is proactive work: tool chrome, drafts, thinking and periodic
             # liveness notices would create a user-visible ping before its final result is known.
@@ -2176,7 +2212,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
             run_generation=run_generation, context_prompt=context_prompt, history=history,
             session_id=session_id, _interrupt_depth=_interrupt_depth,
             event_message_id=event_message_id, inbound_message_id=inbound_message_id,
-            channel_prompt=channel_prompt, moa_config=moa_config,
+            channel_prompt=channel_prompt, moa_config=moa_config, client_message=client_message,
             title_user_message=title_user_message,
             persist_user_message=persist_user_message,
             persist_user_timestamp=persist_user_timestamp,
@@ -2192,6 +2228,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         if not (scheduled_heartbeat or turn_ctx.mute_notification_reply):
             self._run_agent_start_streaming_tts(
                 source, message_type, _status_thread_metadata, turn_ctx.streaming_tts_consumer_holder,
+                channel_prompt=channel_prompt,
             )
 
         # Progress sender drains BOTH tool-progress lines and thinking bubbles (needs_progress_queue).
@@ -2206,7 +2243,8 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         # Periodic "still working" notifications so the user knows the agent hasn't died.
         _executor_task_holder: list = [None]  # bound once the executor future exists (see below)
         _notify_task = (
-            None if (scheduled_heartbeat or turn_ctx.mute_notification_reply or not automatic_notices_allowed(source))
+            None if (client_reply or scheduled_heartbeat or turn_ctx.mute_notification_reply
+                     or not automatic_notices_allowed(source))
             else spawn(self._run_agent_notify_long_running(disp, turn_ctx, _executor_task_holder))
         )
 

@@ -114,11 +114,17 @@ class GatewayTurnPersistenceMixin:
             _sanitize_gateway_final_response, _should_clear_resume_pending_after_turn,
         )
         response = agent_result.get("final_response") or ""
+        from gateway.client_reply_gate import is_client_reply_channel
+        client_reply = is_client_reply_channel(source)
+        client_runtime_failure = bool(
+            client_reply and (not response.strip() or response == "(empty)" or agent_result.get("failed")))
         # Hidden-reasoning-only retry exhaustion: the loop's sentinel text doubles as final_response
         # and would be delivered verbatim (peer agents would ingest it as a completed turn).
         if _is_gateway_hidden_reasoning_incomplete_turn(agent_result):
             response = ""
+            client_runtime_failure = client_reply
         _intentional_silence = self._is_intentional_silence(agent_result, response)
+        client_runtime_failure = client_runtime_failure or (client_reply and _intentional_silence)
         # A queued (/queue) chain's TERMINAL turn owns the silence verdict, not the event that
         # opened the chain: an internal follow-up, or a message not addressed to the bot, may go
         # silent; any other human one must not.
@@ -176,7 +182,13 @@ class GatewayTurnPersistenceMixin:
 
         # Normalize empty responses: surface errors, partial failures, and work-without-text.
         # Fix for #18765.
-        if not _intentional_silence:
+        if client_runtime_failure:
+            from gateway.client_reply_gate import alert_client_reply_block
+            await alert_client_reply_block(
+                source.chat_id, agent_result.get("client_reply_finalizer_block") or
+                "runtime_status_or_empty_final")
+            response = ""
+        elif not _intentional_silence:
             response = strip_trailing_silence_marker(response)
             # A bot peer gets the model's own words only: the runtime's retry hints and "not
             # processed" lines are new inbound messages for its turn loop (#137027).

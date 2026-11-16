@@ -1144,6 +1144,10 @@ def _commit_tool_result(
     # string-safe fallback so a rejected image result never poisons history.
     _tool_content = agent._tool_result_content_for_active_model(function_name, persisted_result)
     tool_message = make_tool_result_message(function_name, _tool_content, tool_call_id, effect_disposition=effect_disposition)
+    # Current-turn client finalization may cite only tool results that actually succeeded.
+    # This internal marker is stripped from provider payloads with other underscore metadata.
+    if getattr(agent, "_client_reply_capture_tool_success", False):
+        tool_message["_client_reply_tool_succeeded"] = not blocked and not is_error
     # A plugin that went live during this turn, and late LSP verdicts on this session's earlier edits,
     # are told on this new row (outside any untrusted-data wrapper).
     lsp_deferred.forward_to_agent(agent)

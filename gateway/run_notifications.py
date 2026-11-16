@@ -314,6 +314,12 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
         metadata: Optional[dict[str, Any]] = None, event_message_id: Optional[str] = None,
         text_already_delivered: bool = False, deliver_media: bool = True, stream_consumer=None,
         session_key: Optional[str] = None, inbound_message_id: Optional[str] = None,
+        channel_prompt: Optional[str] = None,
+        reply_expected: Optional[bool] = None,
+        inbound_text: Optional[str] = None,
+        client_finalized: bool = False,
+        client_manifest_file_path: Optional[str] = None,
+        client_final_text: Optional[str] = None,
     ) -> bool:
         """Deliver a queued response using the normal text+attachment split.
 
@@ -328,8 +334,61 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
         must leave the normal completion send as the fallback, or the user gets nothing. A connector
         DECLINE returns True: that destination is not approved and must not be re-sent."""
         from gateway.run import _strip_response_attachments_for_direct_send
+        from gateway.client_reply_gate import (
+            alert_client_reply_block, attachment_violation, detail_requested_from_message,
+            is_client_reply_channel,
+            prepare_client_reply,
+        )
+        client_reply = is_client_reply_channel(source, channel_prompt)
+        client_text_content = None
+        client_file_path = None
+        if client_reply:
+            if not isinstance(adapter, BasePlatformAdapter):
+                await alert_client_reply_block(source.chat_id, "missing_adapter_gate")
+                return True
+            if not session_key:
+                await alert_client_reply_block(source.chat_id, "missing_session_key")
+                return True
+            extracted = await adapter._extract_response_content(
+                response, MessageEvent(text="", source=source, channel_prompt=channel_prompt),
+                session_key or "", is_ephemeral_response=False)
+            has_attachment = bool(extracted.images or extracted.media_files or extracted.local_files)
+            violation = attachment_violation(
+                extracted.images, extracted.media_files, extracted.local_files)
+            if has_attachment and not violation:
+                client_file_path = (extracted.media_files[0][0] if extracted.media_files
+                                    else extracted.local_files[0])
+            if not client_finalized:
+                violation = "missing_no_tools_finalizer"
+            else:
+                if client_file_path != client_manifest_file_path:
+                    violation = "attachment_manifest_mismatch"
+                if extracted.text_content != client_final_text:
+                    violation = "finalizer_text_changed"
+            if reply_expected is False:
+                violation = "unsolicited_client_channel_output"
+            if not violation:
+                permit, violation = prepare_client_reply(
+                    channel_id=source.chat_id, inbound_ts=inbound_message_id,
+                    channel_prompt=channel_prompt, text=extracted.text_content,
+                    file_path=client_file_path,
+                    detail_requested=detail_requested_from_message(inbound_text))
+            if violation:
+                await alert_client_reply_block(source.chat_id, violation)
+                return True
+            metadata = dict(metadata or {})
+            metadata.update(client_reply_inbound_ts=inbound_message_id,
+                            client_reply_chat_type=source.chat_type,
+                            client_reply_channel_prompt=channel_prompt,
+                            client_reply_permit=permit,
+                            client_reply_detail_requested=detail_requested_from_message(inbound_text))
+            client_text_content = extracted.text_content
+            text_already_delivered = False
+            stream_consumer = None
+            deliver_media = False
         if not text_already_delivered:
-            text_content = _strip_response_attachments_for_direct_send(response, adapter)
+            text_content = (client_text_content if client_reply else
+                            _strip_response_attachments_for_direct_send(response, adapter))
             if text_content:
                 # Reconcile-by-edit first: a stream-sealed message already carries most of the answer;
                 # a plain send here would duplicate it.
@@ -368,7 +427,8 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
                 if not _reconciled:
                     _sent = await self._send_queued_final_text(
                         adapter, source, text_content, metadata, event_message_id, session_key,
-                        inbound_message_id)
+                        inbound_message_id, channel_prompt=channel_prompt,
+                        has_attachment=bool(client_file_path), file_path=client_file_path)
                     if not getattr(_sent, "success", False):
                         # The text never landed. Report it undelivered and skip the attachments too:
                         # the caller's normal completion send replays the whole response (text and
@@ -388,6 +448,8 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
         self, adapter, source: SessionSource, text_content: str, metadata: Optional[dict[str, Any]],
         event_message_id: Optional[str], session_key: Optional[str],
         inbound_message_id: Optional[str] = None,
+        *, channel_prompt: Optional[str] = None, has_attachment: bool = False,
+        file_path: str | None = None,
     ):
         """Send a queued-lane final through the same ledger bracket as the normal final
         (``send_final_ledgered``). This lane used to call ``adapter.send`` bare and discard the
@@ -399,8 +461,10 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
         the base contract and sends without a session key keep the plain send."""
         if session_key and isinstance(adapter, BasePlatformAdapter):
             result, _ = await adapter.send_final_ledgered(
-                MessageEvent(text="", source=source, ledger_message_id=inbound_message_id),
-                session_key, text_content, _mark_notify_metadata(metadata), reply_to=event_message_id)
+                MessageEvent(text="", source=source, ledger_message_id=inbound_message_id,
+                             channel_prompt=channel_prompt),
+                session_key, text_content, _mark_notify_metadata(metadata), reply_to=event_message_id,
+                has_attachment=has_attachment, file_path=file_path)
         else:
             result = await adapter.send(source.chat_id, text_content, metadata=metadata)
         if not getattr(result, "success", False):

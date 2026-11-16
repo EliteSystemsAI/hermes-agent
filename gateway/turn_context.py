@@ -45,6 +45,7 @@ class TurnContext:
     _progress_metadata: Optional[dict] = None
     _progress_reply_to: Optional[Any] = None
     message: Optional[str] = None  # the only rebindable field
+    client_message: Optional[str] = None  # raw inbound text for source-bound finalization
     # turn parameters / config snapshots (read-only in run_sync)
     history: Any = None
     context_prompt: Optional[str] = None

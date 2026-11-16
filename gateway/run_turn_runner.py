@@ -237,6 +237,10 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         ctx = self._ctx
         if ctx.mute_notification_reply:
             return None, None, None, False
+        from gateway.client_reply_gate import is_client_reply_channel
+        if is_client_reply_channel(ctx.source, ctx.channel_prompt):
+            # A client final must be checked as a complete text and attachment set.
+            return None, None, None, False
         stream_consumer = None
         # The streaming-TTS consumer is created on the outer loop thread before run_sync launches;
         # run_sync only reads it via the holder for delta-callback wiring.
@@ -1026,14 +1030,23 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
                       getattr(agent, 'session_completion_tokens', 0) or 0)
             with notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
                 from gateway.response_filters import silence_allowed
+                from gateway.client_reply_gate import is_client_reply_channel
+                client_reply = is_client_reply_channel(ctx.source, ctx.channel_prompt)
                 # Where a bare marker would become the "needed a reply" warning, the agent ends a
                 # marker that follows a written reply on that reply, before transform/persistence.
                 agent._silence_marker_needs_reply = not silence_allowed(
                     ctx.persist_user_display_kind, ctx.reply_expected)
+                agent._client_reply_capture_tool_success = client_reply
                 try:
                     result = agent.run_conversation(api_message, **kwargs)
                 finally:
                     agent._silence_marker_needs_reply = False
+                    agent._client_reply_capture_tool_success = False
+            if client_reply:
+                from gateway.client_reply_finalizer import finalize_client_turn
+                if not isinstance(result, dict):
+                    result = {"final_response": "", "failed": True, "messages": []}
+                result = finalize_client_turn(agent, result, ctx, len(agent_history))
             if captured is not None:
                 incoming = max(0, (getattr(agent, 'session_prompt_tokens', 0) or 0) - before[0])
                 outgoing = max(0, (getattr(agent, 'session_completion_tokens', 0) or 0) - before[1])
@@ -1166,17 +1179,23 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         from gateway.session_api_turn import api_execution
         api = api_execution.get()
         if api is not None:
-            return api['settings'].get('ephemeral_system_prompt') or ''
-        combined = ctx.context_prompt or ""
-        for extra in (
-            (ctx.channel_prompt or "").strip(),
-            self._runner._get_system_prompt_for_channel(
-                ctx.source.platform, ctx.source.chat_id or "", thread_id=getattr(ctx.source, "thread_id", None),
-                parent_id=getattr(ctx.source, "parent_chat_id", None),
-            ),
-        ):
-            if extra:
-                combined = (combined + "\n\n" + extra).strip()
+            combined = api['settings'].get('ephemeral_system_prompt') or ''
+        else:
+            combined = ctx.context_prompt or ""
+            for extra in (
+                (ctx.channel_prompt or "").strip(),
+                self._runner._get_system_prompt_for_channel(
+                    ctx.source.platform, ctx.source.chat_id or "", thread_id=getattr(ctx.source, "thread_id", None),
+                    parent_id=getattr(ctx.source, "parent_chat_id", None),
+                ),
+            ):
+                if extra:
+                    combined = (combined + "\n\n" + extra).strip()
+        from gateway.client_reply_gate import is_client_reply_channel
+        if is_client_reply_channel(ctx.source, ctx.channel_prompt):
+            from gateway.client_reply_finalizer import client_reply_handoff_prompt
+            combined = (combined + "\n\n" + client_reply_handoff_prompt(
+                ctx.source.chat_id, ctx.inbound_message_id)).strip()
         return combined
 
     def _append_auto_media_tags(self, final_response: str, result, agent_history, history_media_paths) -> str:

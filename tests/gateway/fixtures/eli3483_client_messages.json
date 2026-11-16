@@ -1,0 +1,157 @@
+{
+  "kind": "captured_message_set",
+  "provenance": "ELI-3483 Linear comment f9a8770d-868d-41a8-b4df-9fa2cf6fe1d0 and read-only Legend state.db lookup on 2026-11-16",
+  "note": "Unknown source fields are null. This is not a complete eight-envelope replay or verified-fact fixture.",
+  "messages": [
+    {
+      "case": "dnc_tender_email_status",
+      "channel_id": "C0BP7GGCEAK",
+      "message_ts": "1794777310.772859",
+      "thread_parent": "1794777310.772859",
+      "text": "good morning team, <@U0BJFNEDG1X> how did we go with producing the tenders replied to by email?",
+      "source": {
+        "user_id": "U0BVDH3AJ3V",
+        "workspace_team_id": "T09KH5NV5SA",
+        "chat_type": "group",
+        "profile_id": "default",
+        "routing_id": "agent:main:slack:group:T09KH5NV5SA:C0BP7GGCEAK:1794777310.772859",
+        "observed_delivery_team_ids": [
+          "T09KH5NV5SA",
+          "T0BQMT61XHR"
+        ],
+        "reply_anchor_ts": "1794777310.772859",
+        "attachment_metadata": null
+      }
+    },
+    {
+      "case": "dnc_view_package",
+      "channel_id": "C0BP7GGCEAK",
+      "message_ts": "1794777780.906639",
+      "thread_parent": "1794777310.772859",
+      "text": "perfect thats great. i have not gotten an email or been sent the package for the workings/tender. how am i have to view this <@U0BJFNEDG1X>",
+      "source": {
+        "user_id": "U0BVDH3AJ3V",
+        "workspace_team_id": "T09KH5NV5SA",
+        "chat_type": "group",
+        "profile_id": "default",
+        "routing_id": "agent:main:slack:group:T09KH5NV5SA:C0BP7GGCEAK:1794777310.772859",
+        "observed_delivery_team_ids": [
+          "T09KH5NV5SA",
+          "T0BQMT61XHR"
+        ],
+        "reply_anchor_ts": "1794777310.772859",
+        "attachment_metadata": null
+      }
+    },
+    {
+      "case": "dnc_email_preference",
+      "channel_id": "C0BP7GGCEAK",
+      "message_ts": "1794796954.216119",
+      "thread_parent": "1794777310.772859",
+      "text": "Yes I think an email would be better",
+      "source": {
+        "user_id": "U0BVDH3AJ3V",
+        "workspace_team_id": "T0BQMT61XHR",
+        "chat_type": "group",
+        "profile_id": "default",
+        "routing_id": "agent:main:slack:group:T0BQMT61XHR:C0BP7GGCEAK:1794777310.772859",
+        "observed_delivery_team_ids": [
+          "T0BQMT61XHR"
+        ],
+        "reply_anchor_ts": "1794777310.772859",
+        "attachment_metadata": null
+      }
+    },
+    {
+      "case": "claimsafe_stale_task_notice",
+      "channel_id": "C09KQBU5RPW",
+      "message_ts": "1794783105.815959",
+      "thread_parent": "1794783105.815959",
+      "text": "hermes is still saying this even though it has finished a task",
+      "source": {
+        "user_id": "U09KT2Z9YN7",
+        "workspace_team_id": null,
+        "chat_type": null,
+        "profile_id": null,
+        "routing_id": null,
+        "observed_delivery_team_ids": [],
+        "reply_anchor_ts": "1794783105.815959",
+        "attachment_metadata": null
+      }
+    },
+    {
+      "case": "claimsafe_stop_auto_triage",
+      "channel_id": "C09KQBU5RPW",
+      "message_ts": "1794789362.043009",
+      "thread_parent": "1794783105.815959",
+      "text": "<@U0BJFNEDG1X> I need you to help stop the auto triaging because it is pulling jobs from last week I had to do manually ",
+      "source": {
+        "user_id": "U09KT2Z9YN7",
+        "workspace_team_id": "T09KH5NV5SA",
+        "chat_type": "group",
+        "profile_id": "default",
+        "routing_id": "agent:main:slack:group:T09KH5NV5SA:C09KQBU5RPW:1794783105.815959",
+        "observed_delivery_team_ids": [
+          "T09KH5NV5SA"
+        ],
+        "reply_anchor_ts": "1794783105.815959",
+        "attachment_metadata": null
+      }
+    },
+    {
+      "case": "claimsafe_facebook_and_texts",
+      "channel_id": "C09KQBU5RPW",
+      "message_ts": "1794431498.908479",
+      "thread_parent": "1794431498.908479",
+      "text": "<@U0BJFNEDG1X> can you please check why the communication agent is saying it can't send messages on my priv facebook \n\nCan you also please check why it won't access my text messages still\nUnless I click approvals on the computer ",
+      "source": {
+        "user_id": "U09KT2Z9YN7",
+        "workspace_team_id": "T09KH5NV5SA",
+        "chat_type": "group",
+        "profile_id": "default",
+        "routing_id": "agent:main:slack:group:T09KH5NV5SA:C09KQBU5RPW:1794431498.908479",
+        "observed_delivery_team_ids": [
+          "T09KH5NV5SA"
+        ],
+        "reply_anchor_ts": "1794431498.908479",
+        "attachment_metadata": null
+      }
+    },
+    {
+      "case": "healtheboy_csv_export",
+      "channel_id": "C09KLRPP1PC",
+      "message_ts": "1794438434.929809",
+      "thread_parent": "1794436328.731319",
+      "text": "<@U09KCRR9TGT> no stress mate, all good.\n\nCould you send over an export of all the tickets you have in Linear for HTB please and I can go through it today and see what makes sense for you to finish up on your end and what we will take over on our end? A CSV export is perfect.\n\nThanks",
+      "source": {
+        "user_id": "U0C5CMDLB2P",
+        "workspace_team_id": null,
+        "chat_type": null,
+        "profile_id": null,
+        "routing_id": null,
+        "observed_delivery_team_ids": [],
+        "reply_anchor_ts": "1794436328.731319",
+        "attachment_metadata": null
+      }
+    },
+    {
+      "case": "platypus_openai_topups",
+      "channel_id": "C09KEPSR0Q3",
+      "message_ts": "1793661940.723319",
+      "thread_parent": "1793661940.723319",
+      "text": "Morning <@U09KCRR9TGT> <@U0BJFNEDG1X> , we had our OpenAI account get funded 4 x $5 between 5:30pm - 7:30pm yesterday, which is an unusually high usage amount (usually it only needs about $5 per month), so I'm wondering why that would be? Was there some type of testing happening that used the credits?",
+      "source": {
+        "user_id": "U09RE5PTEJ3",
+        "workspace_team_id": "T09KH5NV5SA",
+        "chat_type": "group",
+        "profile_id": "default",
+        "routing_id": "agent:main:slack:group:T09KH5NV5SA:C09KEPSR0Q3:1793661940.723319",
+        "observed_delivery_team_ids": [
+          "T09KH5NV5SA"
+        ],
+        "reply_anchor_ts": "1793661940.723319",
+        "attachment_metadata": null
+      }
+    }
+  ]
+}
