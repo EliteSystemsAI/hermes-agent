@@ -1,5 +1,6 @@
 """The Slack transport must consult the client reply gate before any visible write."""
 
+import asyncio
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -161,6 +162,57 @@ async def test_unconfirmed_zac_dm_is_not_reported_as_delivery(guarded_adapter):
 
     with pytest.raises(RuntimeError, match="Zac DM delivery"):
         await adapter._send_client_reply_alert("C_SHARED", "missing_permit")
+
+
+@pytest.mark.parametrize("thread_ts", ["170.000", "171.001"])
+@pytest.mark.asyncio
+async def test_protected_group_typing_and_clear_make_no_slack_writes(
+    guarded_adapter, thread_ts,
+):
+    adapter, _, metadata = guarded_adapter
+    metadata.update({"thread_id": thread_ts, "message_id": "171.001"})
+    event = SimpleNamespace(source=SimpleNamespace(chat_id="C_SHARED"))
+    assert adapter._start_typing_refresh(event, asyncio.Event(), metadata) is None
+
+    await adapter.send_typing("C_SHARED", metadata=metadata)
+    await adapter._keep_typing("C_SHARED", interval=0.01, metadata=metadata)
+    adapter._active_status_threads[("T_ELITE", "C_SHARED", thread_ts)] = {
+        "thread_ts": thread_ts, "team_id": "T_ELITE"}
+    await adapter.stop_typing("C_SHARED", metadata=metadata)
+    await adapter._set_thread_status("C_SHARED", "T_ELITE", thread_ts, "", "clear")
+
+    assert not adapter._active_status_threads
+    adapter._app.client.assistant_threads_setStatus.assert_not_awaited()
+    adapter._app.client.agents_sessions_setStatus.assert_not_awaited()
+    adapter._app.client.chat_postMessage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_protected_ancillary_writes_are_blocked(guarded_adapter):
+    adapter, _, _ = guarded_adapter
+    client = adapter._app.client
+    adapter._team_clients["T_ELITE"] = client
+
+    assert not await adapter._add_reaction("C_SHARED", "171.001", "eyes", "T_ELITE")
+    assert not await adapter._remove_reaction("C_SHARED", "171.001", "eyes", "T_ELITE")
+    assert not await adapter.delete_message("C_SHARED", "171.001")
+    await adapter._set_assistant_suggested_prompts(
+        "C_SHARED", team_id="T_ELITE", thread_ts="170.000")
+    await adapter._set_assistant_thread_title(
+        "C_SHARED", "170.000", "Status", team_id="T_ELITE")
+    assert not (await adapter._post_ephemeral_fallback(
+        "C_SHARED", {"user_id": "U_HUMAN"}, "status")).success
+    assert not (await adapter._start_stream(
+        client, ("T_ELITE", "C_SHARED", "170.000"), 1, "partial", {})).success
+    assert not await adapter._seal_stream(
+        ("T_ELITE", "C_SHARED", "170.000"), {"ts": "172.001"})
+
+    for method in (
+        "reactions_add", "reactions_remove", "chat_delete",
+        "assistant_threads_setSuggestedPrompts", "assistant_threads_setTitle",
+        "chat_postEphemeral", "chat_startStream", "chat_stopStream",
+    ):
+        getattr(client, method).assert_not_awaited()
 
 
 @pytest.mark.asyncio
