@@ -18,6 +18,14 @@ read-only `git apply --check` against the real live 0.23.0 adapter as the
 `hermes` user. The incremental patch passed
 `git apply --check --cached` against the exact v0.23.0 tag with dedupe staged.
 PR 3's gate patch does not edit the Slack adapter.
+The isolated exact-v0.23.0 checkout combining this adapter patch with
+PR 2 head `d5873c32f8` and PR 3 gate head `9f346a1eeb` passed 52
+focused tests, including three tests of the real gate and SlackAdapter
+together. The gate patch also passed a read-only live apply check.
+
+Release remains blocked on the profile and skill packet, eight-envelope
+replay, and ownership proof across the Legend and Volt boxes. Keep Legend
+muted until those reviews pass.
 
 Run this block from this PR checkout only after PR 2 has been installed.
 It verifies the expected post-dedupe checksum, makes a backup, applies the
