@@ -21,7 +21,10 @@ Apply only after independent review and in a quiet window. Do not send a test
 message to a client. Run the block from this PR checkout. It stops on any
 failed check or backup. The patch is applied to a staged copy as the
 `hermes` user, then root installs the staged file because the image source is
-root-owned. No patch command runs as root.
+root-owned. No patch command runs as root. The `docker exec hermes` commands
+without `-u hermes` run as root in the container. The standing rule forbids
+that without an explicit yes from Zac. Do not run this block until that
+specific root access and the coordinated full-stack restart are approved.
 
 ```sh
 set -eu
@@ -40,8 +43,18 @@ ssh hermes-cloud "docker exec -i -u hermes -e HOME=/opt/data hermes sh -ec 'test
 ssh hermes-cloud "docker exec -u hermes -e HOME=/opt/data hermes python -c 'import ast; ast.parse(open(\"$stage/plugins/platforms/slack/adapter.py\").read())'"
 ssh hermes-cloud "docker exec hermes sha256sum $stage/plugins/platforms/slack/adapter.py" | grep -Fx "$after  $stage/plugins/platforms/slack/adapter.py"
 ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$sha  $target"
-ssh hermes-cloud "docker exec hermes install -o root -g root -m 644 $stage/plugins/platforms/slack/adapter.py $target"
-ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$after  $target"
+if ! ssh hermes-cloud "docker exec hermes install -o root -g root -m 644 $stage/plugins/platforms/slack/adapter.py $target"; then
+  ssh hermes-cloud "docker exec hermes cp -p $backup $target"
+  ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$sha  $target"
+  echo "Install failed; restored backup before restart." >&2
+  exit 1
+fi
+if ! ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$after  $target"; then
+  ssh hermes-cloud "docker exec hermes cp -p $backup $target"
+  ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$sha  $target"
+  echo "Post-install checksum failed; restored backup before restart." >&2
+  exit 1
+fi
 ssh hermes-cloud 'docker exec -u hermes -e HOME=/opt/data hermes /opt/hermes/.venv/bin/python -c "import plugins.platforms.slack.adapter as a; assert hasattr(a.SlackAdapter, \"_inbound_message_dedup_id\"); print(a.__file__)"'
 ssh hermes-cloud 'docker exec -u hermes -e HOME=/opt/data hermes /opt/hermes/.venv/bin/hermes -p default gateway restart --detach'
 ssh hermes-cloud 'docker exec -u hermes -e HOME=/opt/data hermes /opt/hermes/.venv/bin/hermes -p default gateway status'
