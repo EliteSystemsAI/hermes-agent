@@ -7,6 +7,12 @@ upstream v0.23.0 commit
 `2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19` plus the PR 2 dedupe
 patch. It is third-party gateway image code.
 
+Release limit: the SQLite outbound claim coordinates only processes sharing
+one gateway database. Volt on `dnc-hermes-cloud` has a separate store, so
+this patch does not establish Legend and Volt ownership across boxes. Keep
+Legend muted in client channels until an explicit per-channel owner/router
+or shared claim is reviewed and tested across both real installs.
+
 The combined check patch contains dedupe plus adapter changes and passed a
 read-only `git apply --check` against the real live 0.23.0 adapter as the
 `hermes` user. The incremental patch passed
