@@ -32,9 +32,10 @@ _INTERNAL = re.compile(
     r"(?:ACP|shell|terminal)\s+(?:tool|command|session|format|output)|"
     r"config\.ya?ml|SOUL\.md|session[_ -]?key|stack trace|traceback|"
     r"webhook|API endpoint|job\s*(?:(?:id|number)\s*)?[:#]?\s*\d{3,})\b|"
-    r"\b[CDGTU][A-Z0-9]{10,}\b|"
+    r"\b[CDGTU](?=[A-Z0-9]*\d[A-Z0-9]*\b)[A-Z0-9]{10,}\b|"
     r"(?:/(?:opt|home|tmp|var)/[^\s]+)|"
-    r"(?<!\w)(?:\.{1,2}/|[A-Za-z0-9_.-]+/)[A-Za-z0-9_./-]+\b",
+    r"(?<!\w)(?:\.{1,2}/|(?:docs|exports)/)[A-Za-z0-9_./-]+\b|"
+    r"(?<!\w)[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8}\b",
     re.IGNORECASE,
 )
 _NARRATION = re.compile(
@@ -42,8 +43,10 @@ _NARRATION = re.compile(
     r"retrying (?:skill|tool|model)|loading (?:skill|tool)|"
     r"checking (?:my |the )?(?:tools|logs|internal status)|"
     r"running (?:a |the )?(?:check|tool|command)|"
-    r"switching to|using (?:the |a )?(?:local |ACP |shell |tool)|"
+    r"switching to|using (?:the |a )?(?:(?:local )?shell|ACP (?:tool|format)|tool)\b|"
     r"(?:the |a )?(?:shell |ACP )?tool (?:returned|reported|found)|"
+    r"(?:local |the )?shell (?:is|was) (?:done|finished|ready|running)|"
+    r"checking (?:the |your |my )?(?:drawings|plans|tender|files?|documents|records|figures|status) now|"
     r"(?:i am|i'm|we are|we're) (?:checking|running|working|retrying|loading)|"
     r"redirected current run|interrupting current task|"
     r"(?:the )?(?:current )?(?:run|task) (?:was |is )?(?:redirected|interrupted))\b",

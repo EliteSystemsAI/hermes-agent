@@ -99,6 +99,8 @@ def test_final_text_rejections(text, reason):
     "Job 44821 is running.",
     "The workspace is T0BQMT61XHR.",
     "I saved docs/tender for you.",
+    "Checking the drawings now.",
+    "Local shell is done.",
 ])
 def test_grok_exact_internal_narration_examples_are_blocked(text):
     assert gate.final_reply_violation(text, has_attachment=False) in {
@@ -108,6 +110,8 @@ def test_grok_exact_internal_narration_examples_are_blocked(text):
 @pytest.mark.parametrize("text", [
     "The shell of the building is intact.",
     "The ACP panel is included in the drawing.",
+    "We are available 24/7.",
+    "The temperature on site is fine.",
 ])
 def test_client_subject_words_are_not_internal_details(text):
     assert gate.final_reply_violation(text, has_attachment=False) is None
