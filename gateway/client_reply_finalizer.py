@@ -131,6 +131,14 @@ def _no_tools_candidate(agent: Any, packet: dict) -> str:
             reasoning_config=agent.reasoning_config, is_oauth=agent._is_anthropic_oauth,
             preserve_dots=agent._anthropic_preserve_dots(),
             base_url=getattr(agent, "_anthropic_base_url", None))
+    elif mode == "bedrock_converse":
+        # Bedrock embeds tools in toolConfig, not a top-level tools key. Build a
+        # fresh Converse request so no agent tool schema reaches boto3.
+        kwargs = transport.build_kwargs(
+            model=agent.model, messages=messages, tools=None, max_tokens=256,
+            region=getattr(agent, "_bedrock_region", None) or "us-east-1",
+            guardrail_config=getattr(agent, "_bedrock_guardrail_config", None),
+            reasoning_config=getattr(agent, "reasoning_config", None))
     else:
         kwargs = agent._build_api_kwargs(messages)
         kwargs.pop("tools", None)
@@ -138,7 +146,8 @@ def _no_tools_candidate(agent: Any, packet: dict) -> str:
         kwargs.pop("tool_choice", None)
         if mode != "codex_responses":
             kwargs["tool_choice"] = "none"
-    kwargs["timeout"] = 20
+    if mode != "bedrock_converse":
+        kwargs["timeout"] = 20
     response = agent._interruptible_api_call(kwargs)
     normalized = transport.normalize_response(
         response, **({"strip_tool_prefix": agent._is_anthropic_oauth}

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from gateway.client_reply_finalizer import (
-    ClientFinalizerBlocked, build_client_reply_packet, finalize_client_turn,
+    ClientFinalizerBlocked, _no_tools_candidate, build_client_reply_packet, finalize_client_turn,
 )
 from gateway.client_reply_gate import CLIENT_PROMPT_MARKER
 from gateway.config import Platform
@@ -130,3 +130,36 @@ def test_chat_completion_finalizer_forces_tool_choice_none():
     assert result["client_reply_finalized"] is True
     assert "tools" not in agent.kwargs
     assert agent.kwargs["tool_choice"] == "none"
+
+
+def test_bedrock_finalizer_builds_real_converse_kwargs_without_tools():
+    from agent.transports.bedrock import BedrockTransport
+
+    class BedrockAgent(_Agent):
+        api_mode = "bedrock_converse"
+        model = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+        _bedrock_region = "ap-southeast-2"
+        _bedrock_guardrail_config = None
+        reasoning_config = None
+
+        def __init__(self):
+            super().__init__()
+            self.transport = BedrockTransport()
+            self.transport.normalize_response = lambda response: SimpleNamespace(
+                content='{"need_human":false,"text":"The tender total is $540."}', tool_calls=None)
+
+        def _get_transport(self):
+            return self.transport
+
+        def _build_api_kwargs(self, messages):
+            raise AssertionError("agent builder would inherit its toolConfig")
+
+    agent = BedrockAgent()
+    candidate = _no_tools_candidate(agent, {"facts": []})
+    assert json.loads(candidate)["need_human"] is False
+    assert agent.kwargs["__bedrock_region__"] == "ap-southeast-2"
+    assert agent.kwargs["__bedrock_converse__"] is True
+    assert "toolConfig" not in agent.kwargs
+    assert "tools" not in agent.kwargs
+    assert "tool_choice" not in agent.kwargs
+    assert "timeout" not in agent.kwargs
