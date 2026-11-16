@@ -116,16 +116,51 @@ async def test_protected_text_is_one_raw_unformatted_post(guarded_adapter):
 
 
 @pytest.mark.asyncio
-async def test_internal_alert_falls_back_to_zac_dm(guarded_adapter):
+async def test_internal_alert_notifies_ej_and_zac_dms(guarded_adapter):
     adapter, _, _ = guarded_adapter
     internal = AsyncMock()
-    internal.chat_postMessage.side_effect = [RuntimeError("channel unavailable"), {"ok": True}]
+    internal.chat_postMessage.return_value = {"ok": True, "ts": "180.001"}
+    internal.conversations_open.return_value = {
+        "ok": True, "channel": {"id": "D_ZAC"}}
     adapter._team_clients["T09KH5NV5SA"] = internal
 
     await adapter._send_client_reply_alert("C_SHARED", "missing_permit")
 
     assert [call.kwargs["channel"] for call in internal.chat_postMessage.await_args_list] == [
-        "C0BPAMT8JHK", "U09KCRR9TGT"]
+        "D0BJHG8SWN8", "D_ZAC"]
+    internal.conversations_open.assert_awaited_once_with(users="U09KCRR9TGT")
+
+
+@pytest.mark.asyncio
+async def test_failed_ej_dm_retries_then_alerts_zac(guarded_adapter):
+    adapter, _, _ = guarded_adapter
+    internal = AsyncMock()
+    internal.chat_postMessage.side_effect = [
+        RuntimeError("EJ DM unavailable"), RuntimeError("EJ DM unavailable"),
+        {"ok": True, "ts": "180.003"}]
+    internal.conversations_open.return_value = {
+        "ok": True, "channel": {"id": "D_ZAC"}}
+    adapter._team_clients["T09KH5NV5SA"] = internal
+
+    await adapter._send_client_reply_alert("C_SHARED", "missing_permit")
+
+    assert [call.kwargs["channel"] for call in internal.chat_postMessage.await_args_list] == [
+        "D0BJHG8SWN8", "D0BJHG8SWN8", "D_ZAC"]
+    assert "Please notify EJ directly" in internal.chat_postMessage.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_zac_dm_is_not_reported_as_delivery(guarded_adapter):
+    adapter, _, _ = guarded_adapter
+    internal = AsyncMock()
+    internal.chat_postMessage.side_effect = [
+        {"ok": False}, {"ok": False}, {"ok": False}]
+    internal.conversations_open.return_value = {
+        "ok": True, "channel": {"id": "D_ZAC"}}
+    adapter._team_clients["T09KH5NV5SA"] = internal
+
+    with pytest.raises(RuntimeError, match="Zac DM delivery"):
+        await adapter._send_client_reply_alert("C_SHARED", "missing_permit")
 
 
 @pytest.mark.asyncio

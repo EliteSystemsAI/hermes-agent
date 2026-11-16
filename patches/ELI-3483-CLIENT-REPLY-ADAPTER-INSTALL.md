@@ -27,7 +27,7 @@ target=/opt/hermes/plugins/platforms/slack/adapter.py
 backup=/opt/data/adapter.py.bak-ELI-3483-before-reply-gate-v0.23.0
 stage=/opt/data/eli-3483-reply-gate-adapter-stage
 before=9d2b37b2a421d8729426a77ad63cf8002b65bacb9869af800878338ebae6cc24
-after=df5e1e14ec414d16527aedb7eb6ec9054db2279d17624014ed70d4239d6f4151
+after=ee35bcaac0d82bb321782306f684bd35108d6f4eda5bc781535222e84c2e70fb
 
 ssh hermes-cloud 'docker exec -i -u hermes -e HOME=/opt/data hermes sh -lc "cd /opt/hermes && git apply --check -"' < "$patch"
 ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$before  $target"
@@ -42,9 +42,11 @@ ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$after  $tar
 
 After the one coordinated restart, verify the next organic client message
 produces one agent run and one short final reply, and that a second message
-in the same thread gets its own run. For a blocked reply, confirm one alert
-mentions EJ and Zac in internal #team-general, or reaches Zac's DM if that
-internal post fails. Do not send a synthetic client message.
+in the same thread gets its own run. For a blocked reply, confirm Legend
+notified EJ in DM `D0BJHG8SWN8` and Zac in his DM. If EJ's DM fails twice,
+confirm Zac received the fallback asking him to notify EJ. A stored alert
+without confirmed Slack delivery is not proof. Do not send a synthetic
+client message.
 
 Rollback of this adapter file is valid only while the image is still 0.23.0
 and no subsequent adapter change was installed. Restore the client-channel

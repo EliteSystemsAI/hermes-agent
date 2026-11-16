@@ -1,5 +1,5 @@
 diff --git i/plugins/platforms/slack/adapter.py w/plugins/platforms/slack/adapter.py
-index 517fad21f1..c2a913bcb8 100644
+index 517fad21f1..284319db7a 100644
 --- i/plugins/platforms/slack/adapter.py
 +++ w/plugins/platforms/slack/adapter.py
 @@ -1765,6 +1765,8 @@ class SlackAdapter(BasePlatformAdapter):
@@ -39,7 +39,7 @@ index 517fad21f1..c2a913bcb8 100644
          self._running = False
          # Seal dangling native streams so no live-typing indicator survives a restart.
          for key, stream in list(self._active_streams.items()):
-@@ -1944,6 +1953,48 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -1944,6 +1953,69 @@ class SlackAdapter(BasePlatformAdapter):
              parent = ""
          return f"channel:{channel}:{parent}:{event_ts}"
  
@@ -73,22 +73,43 @@ index 517fad21f1..c2a913bcb8 100644
 +        return None
 +
 +    async def _send_client_reply_alert(self, channel_id: str, reason: str) -> None:
-+        """Alert EJ and Zac internally, then fall back to Zac's DM."""
++        """Notify EJ as Legend in his DM and notify Zac in his DM."""
 +        client = self._team_clients["T09KH5NV5SA"]
 +        alert = (
-+            f"<@U09KCSW3UGK> <@U09KCRR9TGT> Hermes blocked a client reply "
-+            f"in {channel_id}: {reason}. Please review the gateway logs."
++            f"Hermes blocked a client reply in {channel_id}: {reason}. "
++            "Please review the gateway logs."
 +        )
-+        try:
-+            await client.chat_postMessage(channel="C0BPAMT8JHK", text=alert)
-+        except Exception:
-+            logger.exception("[Slack] Internal client reply alert failed; trying Zac DM")
-+            await client.chat_postMessage(channel="U09KCRR9TGT", text=alert)
++        ej_notified = False
++        for attempt in range(2):
++            try:
++                response = await client.chat_postMessage(
++                    channel="D0BJHG8SWN8", text=alert)
++                if not response.get("ok"):
++                    raise RuntimeError("Slack did not confirm EJ DM delivery")
++                ej_notified = True
++                break
++            except Exception:
++                logger.warning(
++                    "[Slack] EJ client reply alert attempt %d failed",
++                    attempt + 1, exc_info=True)
++        zac_dm = await self._ensure_dm_conversation(
++            "U09KCRR9TGT", team_id="T09KH5NV5SA")
++        if not str(zac_dm).startswith("D"):
++            raise RuntimeError("Could not open Zac DM for client reply alert")
++        zac_alert = (
++            alert if ej_notified else
++            f"{alert} EJ's DM failed twice. Please notify EJ directly."
++        )
++        response = await client.chat_postMessage(channel=zac_dm, text=zac_alert)
++        if not response.get("ok"):
++            raise RuntimeError("Slack did not confirm Zac DM delivery")
++        if not ej_notified:
++            logger.error("[Slack] EJ DM alert failed twice; Zac DM fallback was delivered")
 +
      @staticmethod
      def _workspace_message_marker(team_id: str, message_id: str) -> Any:
          """Return an in-memory routing marker without changing legacy no-team tests."""
-@@ -2075,6 +2126,10 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -2075,6 +2147,10 @@ class SlackAdapter(BasePlatformAdapter):
          reply_to: Optional[str] = None, metadata: Optional[dict[str, Any]] = None,
          fallback_text: Optional[str] = None) -> SendResult:
          """Start or update a Slack-native plan/task progress stream."""
@@ -99,7 +120,7 @@ index 517fad21f1..c2a913bcb8 100644
          title = title or t("platform.slack.task_card.title")
          if not self._app:
              return SendResult(success=False, error="Not connected")
-@@ -2225,19 +2280,26 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -2225,19 +2301,26 @@ class SlackAdapter(BasePlatformAdapter):
          blocked = self._outbound_blocked(chat_id, "outbound generic send to")
          if blocked:
              return blocked
@@ -129,7 +150,7 @@ index 517fad21f1..c2a913bcb8 100644
              if not formatted or not formatted.strip():
                  # Slack returns ``no_text`` for blank posts; still the end of a
                  # delivery attempt, so the "is thinking..." status must clear.
-@@ -2246,8 +2308,13 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -2246,8 +2329,13 @@ class SlackAdapter(BasePlatformAdapter):
                  # "(empty)" final responses are filtered upstream), the assistant thread status must not
                  # stay stuck on "is thinking..." (#24117).
                  return SendResult(success=True)
@@ -144,7 +165,7 @@ index 517fad21f1..c2a913bcb8 100644
              # Clear Slack Assistant status as soon as the final message is posted.
              if thread_ts:
                  await self.stop_typing(chat_id, metadata=metadata)
-@@ -2275,15 +2342,17 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -2275,15 +2363,17 @@ class SlackAdapter(BasePlatformAdapter):
                  retry_after=self._retry_after_from_exc(e) if _retryable else None)
  
      async def _post_chunks(
@@ -165,7 +186,7 @@ index 517fad21f1..c2a913bcb8 100644
          last_result = None
          for i, chunk in enumerate(chunks):
              kwargs = {
-@@ -2335,6 +2404,10 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -2335,6 +2425,10 @@ class SlackAdapter(BasePlatformAdapter):
          blocked = self._outbound_blocked(chat_id, "outbound generic ephemeral notice to")
          if blocked:
              return blocked
@@ -176,7 +197,7 @@ index 517fad21f1..c2a913bcb8 100644
          if not chat_id or not user_id:
              return SendResult(success=False, error="chat_id and user_id are required")
          try:
-@@ -2392,6 +2465,10 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -2392,6 +2486,10 @@ class SlackAdapter(BasePlatformAdapter):
          blocked = self._outbound_blocked(chat_id, "message edit in")
          if blocked:
              return blocked
@@ -187,7 +208,7 @@ index 517fad21f1..c2a913bcb8 100644
          try:
              formatted = self.format_message(content)
              # chat.update has postMessage's ~40k limit but cannot split, so truncate to fit
-@@ -2479,6 +2556,10 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -2479,6 +2577,10 @@ class SlackAdapter(BasePlatformAdapter):
          """Stream a frame via Slack's native streaming APIs.
          First frame for a (chat, draft_id) starts the stream; later frames append the delta.
          ``content`` is the full accumulated text (append-only within one text segment)."""
@@ -198,7 +219,7 @@ index 517fad21f1..c2a913bcb8 100644
          if not self._app:
              return SendResult(success=False, error="Not connected")
          if self._native_stream_unsupported:
-@@ -2918,6 +2999,10 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -2918,6 +3020,10 @@ class SlackAdapter(BasePlatformAdapter):
          content: Optional[bytes] = None, attempts: int = 3) -> SendResult:
          """``files_upload_v2`` of a local path (or in-memory ``content``) with up to
          ``attempts`` tries on transient errors; re-raises otherwise."""
@@ -209,7 +230,7 @@ index 517fad21f1..c2a913bcb8 100644
          source = {"file": file_path} if content is None else {"content": content}
          for attempt in range(attempts):
              try:
-@@ -2974,6 +3059,10 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -2974,6 +3080,10 @@ class SlackAdapter(BasePlatformAdapter):
          call, Slack cap) instead of N posts; falls back to the base per-image loop on failure."""
          if self._suppressed_ignored(chat_id, "multi-image upload in"):
              return SendResult(success=False, error="ignored_channel")
@@ -220,7 +241,7 @@ index 517fad21f1..c2a913bcb8 100644
          if not self._app:
              return SendResult(success=False, error="Not connected")
          if not images:
-@@ -3506,6 +3595,11 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -3506,6 +3616,11 @@ class SlackAdapter(BasePlatformAdapter):
          reply_to: Optional[str] = None, metadata: Optional[dict[str, Any]] = None, **kwargs,
      ) -> SendResult:
          """Send an audio file to Slack."""
@@ -232,7 +253,7 @@ index 517fad21f1..c2a913bcb8 100644
          try:
              return await self._upload_file(chat_id, audio_path, caption, reply_to, metadata)
          except FileNotFoundError:
-@@ -4909,6 +5003,10 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -4909,6 +5024,10 @@ class SlackAdapter(BasePlatformAdapter):
          self, chat_id: str, text: str, blocks: list, metadata: Optional[dict[str, Any]], *,
          sanitize: bool = True, team_scoped: bool = True):
          """chat.postMessage with ``blocks`` (threaded via metadata); returns the raw response."""
@@ -243,7 +264,7 @@ index 517fad21f1..c2a913bcb8 100644
          kwargs: dict[str, Any] = {
              "channel": chat_id, "text": text,
              "blocks": sanitize_blocks(blocks) if sanitize else blocks}
-@@ -5147,6 +5245,10 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -5147,6 +5266,10 @@ class SlackAdapter(BasePlatformAdapter):
          ``_handle_model_picker_action``, which calls ``on_model_selected`` on
          a model choice.
          """
@@ -254,7 +275,7 @@ index 517fad21f1..c2a913bcb8 100644
          if not self._app:
              return SendResult(success=False, error="Not connected")
  
-@@ -5215,6 +5317,11 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -5215,6 +5338,11 @@ class SlackAdapter(BasePlatformAdapter):
          section_text: str,
      ) -> None:
          """Replace the picker message body with a plain section (no controls)."""
@@ -266,7 +287,7 @@ index 517fad21f1..c2a913bcb8 100644
          try:
              await self._get_client(channel_id, team_id=team_id or None).chat_update(
                  channel=channel_id,
-@@ -5241,6 +5348,10 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -5241,6 +5369,10 @@ class SlackAdapter(BasePlatformAdapter):
          message = body.get("message", {})
          msg_ts = message.get("ts", "")
          channel_id = body.get("channel", {}).get("id", "")
@@ -277,7 +298,7 @@ index 517fad21f1..c2a913bcb8 100644
          user_name = body.get("user", {}).get("name", "unknown")
          user_id = body.get("user", {}).get("id", "")
  
-@@ -5560,6 +5671,11 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -5560,6 +5692,11 @@ class SlackAdapter(BasePlatformAdapter):
          self, channel_id: str, msg_ts: str, original_text: str, decision_text: str,
          placeholder: str, label: str, team_id: Optional[str] = None, sanitize: bool = True) -> None:
          """Rewrite a button prompt to show the outcome and drop the buttons."""
@@ -289,7 +310,7 @@ index 517fad21f1..c2a913bcb8 100644
          updated_blocks = [
              {"type": "section", "text": {"type": "mrkdwn", "text": original_text or placeholder}},
              {"type": "context", "elements": [{"type": "mrkdwn", "text": decision_text}]}]
-@@ -5604,6 +5720,11 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -5604,6 +5741,11 @@ class SlackAdapter(BasePlatformAdapter):
              from tools import slash_confirm as _slash_confirm_mod
              result_text = await _slash_confirm_mod.resolve(session_key, confirm_id, choice)
              if result_text:
@@ -301,7 +322,7 @@ index 517fad21f1..c2a913bcb8 100644
                  post_kwargs: dict[str, Any] = {"channel": channel_id, "text": result_text}
                  thread_ts = message.get("thread_ts") or msg_ts  # stay in the same thread
                  if thread_ts:
-@@ -6755,6 +6876,13 @@ async def _standalone_send(
+@@ -6755,6 +6897,13 @@ async def _standalone_send(
      caption=None):
      """Out-of-process delivery (``standalone_sender_fn``) for cron/tool processes not co-located
      with the gateway: text via ``chat.postMessage`` (aiohttp), media via ``files_upload_v2``."""
