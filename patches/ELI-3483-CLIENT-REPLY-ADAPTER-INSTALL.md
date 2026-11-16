@@ -33,6 +33,9 @@ incremental patch as `hermes` to a staged copy, and lets root install that
 copy because `/opt/hermes` is root-owned. Any failed step stops the block.
 There is no client test send. The coordinator performs one gateway restart
 after the whole gate stack is installed in a quiet window.
+Commands using `docker exec hermes` without `-u hermes` run as root.
+The standing rule requires Zac's explicit yes for those steps. Do not run
+this block or restart until that approval and all release reviews are done.
 
 ```sh
 set -eu
@@ -50,8 +53,18 @@ ssh hermes-cloud "docker exec hermes sha256sum $backup" | grep -Fx "$before  $ba
 ssh hermes-cloud "docker exec -i -u hermes -e HOME=/opt/data hermes sh -ec 'test ! -e $stage && mkdir -p $stage/plugins/platforms/slack && cp $target $stage/plugins/platforms/slack/adapter.py && cd $stage && git apply -'" < "$patch"
 ssh hermes-cloud "docker exec hermes sha256sum $stage/plugins/platforms/slack/adapter.py" | grep -Fx "$after  $stage/plugins/platforms/slack/adapter.py"
 ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$before  $target"
-ssh hermes-cloud "docker exec hermes install -o root -g root -m 644 $stage/plugins/platforms/slack/adapter.py $target"
-ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$after  $target"
+if ! ssh hermes-cloud "docker exec hermes install -o root -g root -m 644 $stage/plugins/platforms/slack/adapter.py $target"; then
+  ssh hermes-cloud "docker exec hermes cp -p $backup $target"
+  ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$before  $target"
+  echo "Install failed; restored backup before restart." >&2
+  exit 1
+fi
+if ! ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$after  $target"; then
+  ssh hermes-cloud "docker exec hermes cp -p $backup $target"
+  ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$before  $target"
+  echo "Post-install checksum failed; restored backup before restart." >&2
+  exit 1
+fi
 ```
 
 After the one coordinated restart, verify the next organic client message
