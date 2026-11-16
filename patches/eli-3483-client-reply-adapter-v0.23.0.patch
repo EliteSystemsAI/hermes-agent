@@ -1,5 +1,5 @@
 diff --git i/plugins/platforms/slack/adapter.py w/plugins/platforms/slack/adapter.py
-index 517fad21f1..284319db7a 100644
+index b8bc11abda..7a588b730b 100644
 --- i/plugins/platforms/slack/adapter.py
 +++ w/plugins/platforms/slack/adapter.py
 @@ -1765,6 +1765,8 @@ class SlackAdapter(BasePlatformAdapter):
@@ -253,7 +253,7 @@ index 517fad21f1..284319db7a 100644
          try:
              return await self._upload_file(chat_id, audio_path, caption, reply_to, metadata)
          except FileNotFoundError:
-@@ -4909,6 +5024,10 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -4907,6 +5022,10 @@ class SlackAdapter(BasePlatformAdapter):
          self, chat_id: str, text: str, blocks: list, metadata: Optional[dict[str, Any]], *,
          sanitize: bool = True, team_scoped: bool = True):
          """chat.postMessage with ``blocks`` (threaded via metadata); returns the raw response."""
@@ -264,7 +264,7 @@ index 517fad21f1..284319db7a 100644
          kwargs: dict[str, Any] = {
              "channel": chat_id, "text": text,
              "blocks": sanitize_blocks(blocks) if sanitize else blocks}
-@@ -5147,6 +5266,10 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -5145,6 +5264,10 @@ class SlackAdapter(BasePlatformAdapter):
          ``_handle_model_picker_action``, which calls ``on_model_selected`` on
          a model choice.
          """
@@ -275,7 +275,7 @@ index 517fad21f1..284319db7a 100644
          if not self._app:
              return SendResult(success=False, error="Not connected")
  
-@@ -5215,6 +5338,11 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -5213,6 +5336,11 @@ class SlackAdapter(BasePlatformAdapter):
          section_text: str,
      ) -> None:
          """Replace the picker message body with a plain section (no controls)."""
@@ -287,7 +287,7 @@ index 517fad21f1..284319db7a 100644
          try:
              await self._get_client(channel_id, team_id=team_id or None).chat_update(
                  channel=channel_id,
-@@ -5241,6 +5369,10 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -5239,6 +5367,10 @@ class SlackAdapter(BasePlatformAdapter):
          message = body.get("message", {})
          msg_ts = message.get("ts", "")
          channel_id = body.get("channel", {}).get("id", "")
@@ -298,7 +298,7 @@ index 517fad21f1..284319db7a 100644
          user_name = body.get("user", {}).get("name", "unknown")
          user_id = body.get("user", {}).get("id", "")
  
-@@ -5560,6 +5692,11 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -5558,6 +5690,11 @@ class SlackAdapter(BasePlatformAdapter):
          self, channel_id: str, msg_ts: str, original_text: str, decision_text: str,
          placeholder: str, label: str, team_id: Optional[str] = None, sanitize: bool = True) -> None:
          """Rewrite a button prompt to show the outcome and drop the buttons."""
@@ -310,7 +310,7 @@ index 517fad21f1..284319db7a 100644
          updated_blocks = [
              {"type": "section", "text": {"type": "mrkdwn", "text": original_text or placeholder}},
              {"type": "context", "elements": [{"type": "mrkdwn", "text": decision_text}]}]
-@@ -5604,6 +5741,11 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -5602,6 +5739,11 @@ class SlackAdapter(BasePlatformAdapter):
              from tools import slash_confirm as _slash_confirm_mod
              result_text = await _slash_confirm_mod.resolve(session_key, confirm_id, choice)
              if result_text:
@@ -322,7 +322,7 @@ index 517fad21f1..284319db7a 100644
                  post_kwargs: dict[str, Any] = {"channel": channel_id, "text": result_text}
                  thread_ts = message.get("thread_ts") or msg_ts  # stay in the same thread
                  if thread_ts:
-@@ -6755,6 +6897,13 @@ async def _standalone_send(
+@@ -6753,6 +6895,13 @@ async def _standalone_send(
      caption=None):
      """Out-of-process delivery (``standalone_sender_fn``) for cron/tool processes not co-located
      with the gateway: text via ``chat.postMessage`` (aiohttp), media via ``files_upload_v2``."""

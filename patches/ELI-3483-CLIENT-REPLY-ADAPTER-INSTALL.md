@@ -32,8 +32,8 @@ patch=patches/eli-3483-client-reply-adapter-v0.23.0.patch
 target=/opt/hermes/plugins/platforms/slack/adapter.py
 backup=/opt/data/adapter.py.bak-ELI-3483-before-reply-gate-v0.23.0
 stage=/opt/data/eli-3483-reply-gate-adapter-stage
-before=9d2b37b2a421d8729426a77ad63cf8002b65bacb9869af800878338ebae6cc24
-after=ee35bcaac0d82bb321782306f684bd35108d6f4eda5bc781535222e84c2e70fb
+before=8cd9c51dcf03423b9a81049d8f2bda35405dd45bab1a405633eab64aeaa4d977
+after=8c37f71a28b042feac12d539537ffe134762113566e4ec6a885f66140b5c5ee0
 
 ssh hermes-cloud 'docker exec -i -u hermes -e HOME=/opt/data hermes sh -lc "cd /opt/hermes && git apply --check -"' < "$patch"
 ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$before  $target"
@@ -63,7 +63,7 @@ rollback and one gateway restart. Check the backup checksum first:
 set -eu
 backup=/opt/data/adapter.py.bak-ELI-3483-before-reply-gate-v0.23.0
 target=/opt/hermes/plugins/platforms/slack/adapter.py
-before=9d2b37b2a421d8729426a77ad63cf8002b65bacb9869af800878338ebae6cc24
+before=8cd9c51dcf03423b9a81049d8f2bda35405dd45bab1a405633eab64aeaa4d977
 ssh hermes-cloud "docker exec hermes sha256sum $backup" | grep -Fx "$before  $backup"
 ssh hermes-cloud "docker exec hermes cp -p $backup $target"
 ```
