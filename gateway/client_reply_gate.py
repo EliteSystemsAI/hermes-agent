@@ -17,9 +17,14 @@ from hermes_constants import get_process_hermes_home
 logger = logging.getLogger(__name__)
 CLIENT_PROMPT_MARKER = "CLIENT COMMUNICATION STANDARD."
 CLIENT_CHANNEL_IDS = frozenset({
-    "C09KQBU5RPW", "C0BP7GGCEAK", "C0BCK3G1G5S", "C0BCRG8001G",
-    "C09KLRPP1PC", "C09KEPSR0Q3", "C09LY0U6MK6", "C09KNPLC4BZ",
-    "C0AE4UGK01J", "C0BG8HQMYHH", "C09L25R8KN2", "C0A5XUNJWHY",
+    # Exact Legend client mute list: 26 root prompts plus archived GreenScope.
+    "C09KLRPP1PC", "C09KEPSR0Q3", "C09KL0ZN8H1", "C09KNPLC4BZ",
+    "C09KQBU5RPW", "C09KQNUUSJG", "C09KVV4GFNF", "C09L0PRTMT7",
+    "C09L0Q5GRFX", "C09L25R8KN2", "C09L7PVFW6Q", "C09L7QQSLH2",
+    "C09LFGTFRGQ", "C09LH57UJTT", "C09LY0U6MK6", "C09UAMLNT6Z",
+    "C0A5RHHK6EP", "C0A5XUHTXMG", "C0A5XUNJWHY", "C0A61GPAWJG",
+    "C0AB32RE5DW", "C0AE4UGK01J", "C0BCK3G1G5S", "C0BCRG8001G",
+    "C0BG8HQMYHH", "C0BP7GGCEAK", "C0BCDP18Z46",
 })
 DOCUMENT_SUFFIXES = frozenset({".csv", ".pdf", ".txt", ".docx", ".xlsx"})
 _INTERNAL = re.compile(
@@ -157,14 +162,14 @@ def _claim_path() -> Path:
     return get_process_hermes_home() / "client_reply_claims.sqlite3"
 
 
-def _claim_once(bot_id: str, channel_id: str, inbound_ts: str) -> bool:
+def _claim_once(channel_id: str, inbound_ts: str) -> bool:
     path = _claim_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path, timeout=5) as db:
-        db.execute("CREATE TABLE IF NOT EXISTS sent (bot_id TEXT NOT NULL, channel_id TEXT NOT NULL, "
-                   "inbound_ts TEXT NOT NULL, PRIMARY KEY(bot_id,channel_id,inbound_ts))")
-        cur = db.execute("INSERT OR IGNORE INTO sent VALUES (?,?,?)",
-                         (bot_id, channel_id, inbound_ts))
+        db.execute("CREATE TABLE IF NOT EXISTS sent_v2 (channel_id TEXT NOT NULL, "
+                   "inbound_ts TEXT NOT NULL, PRIMARY KEY(channel_id,inbound_ts))")
+        cur = db.execute("INSERT OR IGNORE INTO sent_v2 VALUES (?,?)",
+                         (channel_id, inbound_ts))
         return cur.rowcount == 1
 
 
@@ -205,7 +210,7 @@ async def authorize_slack_egress(*, channel_id: str, bot_id: str, operation: str
             reason = "permit_file_mismatch"
         else:
             try:
-                if not _claim_once(bot_id, channel_id, permit.inbound_ts):
+                if not _claim_once(channel_id, permit.inbound_ts):
                     reason = "duplicate_reply"
             except (OSError, sqlite3.Error):
                 logger.exception("Client reply claim failed")

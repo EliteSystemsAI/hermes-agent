@@ -13,6 +13,15 @@ from gateway.session import SessionSource
 
 DNC = "C0BP7GGCEAK"
 PROMPT = gate.CLIENT_PROMPT_MARKER + " Short human client reply."
+CONFIRMED_CLIENT_CHANNELS = {
+    "C09KLRPP1PC", "C09KEPSR0Q3", "C09KL0ZN8H1", "C09KNPLC4BZ",
+    "C09KQBU5RPW", "C09KQNUUSJG", "C09KVV4GFNF", "C09L0PRTMT7",
+    "C09L0Q5GRFX", "C09L25R8KN2", "C09L7PVFW6Q", "C09L7QQSLH2",
+    "C09LFGTFRGQ", "C09LH57UJTT", "C09LY0U6MK6", "C09UAMLNT6Z",
+    "C0A5RHHK6EP", "C0A5XUHTXMG", "C0A5XUNJWHY", "C0A61GPAWJG",
+    "C0AB32RE5DW", "C0AE4UGK01J", "C0BCK3G1G5S", "C0BCRG8001G",
+    "C0BG8HQMYHH", "C0BP7GGCEAK", "C0BCDP18Z46",
+}
 
 
 def _event(ts="1731729660.000100", *, prompt=PROMPT, team="T_PRIMARY"):
@@ -51,6 +60,11 @@ def test_captured_dnc_group_is_protected_even_when_prompt_missing():
     assert _thread_metadata_for_event(_event())["thread_id"] == "1731729000.000001"
 
 
+def test_client_map_matches_confirmed_legend_mute():
+    assert gate.CLIENT_CHANNEL_IDS == CONFIRMED_CLIENT_CHANNELS
+    assert len(gate.CLIENT_CHANNEL_IDS) == 27
+
+
 @pytest.mark.parametrize("text,reason", [
     (" ".join(["word"] * 61), "over_60_words"),
     ("What happened? What next?", "multiple_questions"),
@@ -82,7 +96,7 @@ async def test_one_claim_ignores_team_and_root_but_allows_next_inbound(isolated_
     repeated = _event(team="T_SECOND")
     second_token, _ = gate.prepare_client_reply(channel_id=DNC, inbound_ts=repeated.message_id,
                                                 channel_prompt=PROMPT, text=text)
-    duplicate = await gate.authorize_slack_egress(channel_id=DNC, bot_id="U_LEGEND", operation="text",
+    duplicate = await gate.authorize_slack_egress(channel_id=DNC, bot_id="U_OTHER_ELITE_WORKSPACE", operation="text",
                                                    text=text, metadata=_meta(repeated, second_token))
     assert duplicate == gate.EgressDecision(False, "duplicate_reply")
     followup = _event(ts="1731729661.000200", team="T_SECOND")
