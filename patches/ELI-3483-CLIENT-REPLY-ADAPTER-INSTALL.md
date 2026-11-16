@@ -18,12 +18,15 @@ read-only `git apply --check` against the real live 0.23.0 adapter as the
 `hermes` user. The incremental patch passed
 `git apply --check --cached` against the exact v0.23.0 tag with dedupe staged.
 PR 3's gate patch does not edit the Slack adapter.
-The previous adapter patch combined with PR 2 head `d5873c32f8` and
-PR 3 gate head `9f346a1eeb` passed 52 focused tests. The refreshed
-adapter patch passes 18 focused exact-v0.23.0 tests, including protected
-group-thread and top-level zero-write typing tests. A refreshed joint run
-with the real gate is pending. The gate patch also passed a read-only live
-apply check.
+The refreshed adapter patch with PR 2 head `c70702db3d` and PR 3 gate
+head `87497dd3e2` passed 96 focused tests in a clean exact-v0.23.0
+joint checkout, including typing/status and eight opt-in no-send checks.
+The local exact-tag dedupe and transport tests pass 18 cases; the typing
+cases use the real protected DNC channel ID. The combined runtime patch
+SHA256 is
+`924e7ccd14f42022a72b67ec551044e3fcf8f02306040fd9990dc99ec26fff1f`
+and passed a read-only `git apply --check` against live `/opt/hermes`
+as the `hermes` user.
 
 Release remains blocked on the profile and skill packet, eight-envelope
 replay, and ownership proof across the Legend and Volt boxes. Keep Legend

@@ -167,19 +167,23 @@ async def test_unconfirmed_zac_dm_is_not_reported_as_delivery(guarded_adapter):
 @pytest.mark.parametrize("thread_ts", ["170.000", "171.001"])
 @pytest.mark.asyncio
 async def test_protected_group_typing_and_clear_make_no_slack_writes(
-    guarded_adapter, thread_ts,
+    guarded_adapter, thread_ts, monkeypatch,
 ):
     adapter, _, metadata = guarded_adapter
+    chat_id = "C0BP7GGCEAK"
+    monkeypatch.setattr(
+        sys.modules["gateway.client_reply_gate"], "CLIENT_CHANNEL_IDS",
+        frozenset({"C_SHARED", chat_id}))
     metadata.update({"thread_id": thread_ts, "message_id": "171.001"})
-    event = SimpleNamespace(source=SimpleNamespace(chat_id="C_SHARED"))
+    event = SimpleNamespace(source=SimpleNamespace(chat_id=chat_id))
     assert adapter._start_typing_refresh(event, asyncio.Event(), metadata) is None
 
-    await adapter.send_typing("C_SHARED", metadata=metadata)
-    await adapter._keep_typing("C_SHARED", interval=0.01, metadata=metadata)
-    adapter._active_status_threads[("T_ELITE", "C_SHARED", thread_ts)] = {
+    await adapter.send_typing(chat_id, metadata=metadata)
+    await adapter._keep_typing(chat_id, interval=0.01, metadata=metadata)
+    adapter._active_status_threads[("T_ELITE", chat_id, thread_ts)] = {
         "thread_ts": thread_ts, "team_id": "T_ELITE"}
-    await adapter.stop_typing("C_SHARED", metadata=metadata)
-    await adapter._set_thread_status("C_SHARED", "T_ELITE", thread_ts, "", "clear")
+    await adapter.stop_typing(chat_id, metadata=metadata)
+    await adapter._set_thread_status(chat_id, "T_ELITE", thread_ts, "", "clear")
 
     assert not adapter._active_status_threads
     adapter._app.client.assistant_threads_setStatus.assert_not_awaited()
