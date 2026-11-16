@@ -147,11 +147,13 @@ def _thread_metadata_for_event(event) -> dict | None:
     """``_thread_metadata_for_source`` for an event, anchored on its reply id."""
     metadata = _thread_metadata_for_source(event.source, _reply_anchor_for_event(event)) or {}
     if _platform_name(getattr(event.source, "platform", None)) == "slack":
+        from gateway.client_reply_gate import detail_requested_from_message
         # The individual inbound TS identifies this reply. The thread root remains routing only.
         metadata["client_reply_inbound_ts"] = getattr(event, "message_id", None)
         metadata["client_reply_chat_type"] = getattr(event.source, "chat_type", None)
         metadata["client_reply_channel_prompt"] = getattr(event, "channel_prompt", None)
         metadata["client_reply_bot_id"] = getattr(event, "bot_id", None)
+        metadata["client_reply_detail_requested"] = detail_requested_from_message(getattr(event, "text", None))
     return metadata or None
 
 
@@ -4301,7 +4303,9 @@ class BasePlatformAdapter(ABC):
             alert_client_reply_block, final_reply_violation, is_client_reply_channel,
         )
         if is_client_reply_channel(event.source, event.channel_prompt):
-            reason = final_reply_violation(text_content, has_attachment=bool(file_path))
+            reason = final_reply_violation(
+                text_content, has_attachment=bool(file_path),
+                detail_requested=bool((metadata or {}).get("client_reply_detail_requested")))
             if has_attachment and not file_path:
                 reason = "attachment_without_bundle"
             if not (metadata or {}).get("client_reply_permit"):
@@ -4531,7 +4535,8 @@ class BasePlatformAdapter(ABC):
                     response, event, session_key, is_ephemeral_response=is_ephemeral_response)
                 text_content, media_files = extracted.text_content, extracted.media_files
                 from gateway.client_reply_gate import (
-                    alert_client_reply_block, attachment_violation, is_client_reply_channel,
+                    alert_client_reply_block, attachment_violation, detail_requested_from_message,
+                    is_client_reply_channel,
                     prepare_client_reply,
                 )
                 client_reply = is_client_reply_channel(event.source, event.channel_prompt)
@@ -4548,7 +4553,8 @@ class BasePlatformAdapter(ABC):
                         permit, violation = prepare_client_reply(
                             channel_id=event.source.chat_id, inbound_ts=event.message_id,
                             channel_prompt=event.channel_prompt, text=text_content,
-                            file_path=client_file_path)
+                            file_path=client_file_path,
+                            detail_requested=detail_requested_from_message(event.text))
                     if violation:
                         await alert_client_reply_block(event.source.chat_id, violation)
                         text_content = ""

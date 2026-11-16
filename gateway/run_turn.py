@@ -1669,6 +1669,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
                     # the raw inbound id (the anchor above is only the reply target).
                     session_key=session_key, inbound_message_id=turn_ctx.inbound_message_id,
                     channel_prompt=getattr(turn_ctx, "channel_prompt", None), reply_expected=turn_ctx.reply_expected,
+                    inbound_text=turn_ctx.message,
                 )
             except Exception as e:
                 logger.warning("Failed to send first response before queued message: %s", e)

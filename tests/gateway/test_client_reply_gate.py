@@ -1,6 +1,7 @@
 """Protected DNC group transport and one-send policy on the live v0.23.0 layout."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -74,6 +75,70 @@ def test_client_map_matches_confirmed_legend_mute():
 ])
 def test_final_text_rejections(text, reason):
     assert gate.final_reply_violation(text, has_attachment=False) == reason
+
+
+@pytest.mark.parametrize("text", [
+    "Switching to local shell to read the tender file.",
+    "Using the ACP tool-call format now.",
+    "The shell tool returned the totals.",
+    "I saved docs/tender.csv for you.",
+    "See ./exports/tender.csv.",
+    "I posted this to C0BP7GGCEAK.",
+    "Job id 44821 is running.",
+    "I'm checking the drawings now.",
+    "Redirected current run.",
+    "Interrupting current task.",
+])
+def test_grok_exact_internal_narration_examples_are_blocked(text):
+    assert gate.final_reply_violation(text, has_attachment=False) in {
+        "work_narration", "internal_detail"}
+
+
+def test_explicit_detail_request_allows_long_reply():
+    text = " ".join(["detail"] * 61)
+    assert gate.final_reply_violation(text, has_attachment=False) == "over_60_words"
+    assert gate.detail_requested_from_message("Please give me a detailed breakdown of the cost.")
+    token, reason = gate.prepare_client_reply(
+        channel_id=DNC, inbound_ts="171.003", channel_prompt=PROMPT, text=text,
+        detail_requested=gate.detail_requested_from_message("Please give me a detailed breakdown."))
+    assert token and reason is None
+
+
+class _PersistenceRunner:
+    from gateway.run_turn_persistence import GatewayTurnPersistenceMixin
+
+    async def _clear_restart_failure_count(self, *_args):
+        return None
+
+    def _is_intentional_silence(self, agent_result, response):
+        from gateway.response_filters import is_intentional_silence_agent_result
+        return is_intentional_silence_agent_result(agent_result, response)
+
+    def _silence_allowed_for_source(self, *_args):
+        return False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result", [
+    {"final_response": "(empty)", "api_calls": 2},
+    {"final_response": "[SILENT]", "api_calls": 1},
+    {"final_response": "", "api_calls": 0, "interrupted": True},
+    {"final_response": "", "api_calls": 1, "failed": True, "error": "outage"},
+])
+async def test_runtime_status_fallback_never_enters_client_delivery(result, isolated_gate):
+    from gateway.run_turn_persistence import GatewayTurnPersistenceMixin
+
+    class Runner(_PersistenceRunner, GatewayTurnPersistenceMixin):
+        pass
+
+    runner = Runner()
+    shaped, _silent, _messages = await runner._hmwa_shape_agent_response(
+        {**result, "messages": []}, _event().source, history=[],
+        session_entry=SimpleNamespace(session_id="s"), session_key=None,
+        _quick_key=None, run_generation=0, _run_start_session_id="s",
+        _platform_name="slack", _msg_start_time=0.0, reply_expected=True)
+    assert shaped == ""
+    assert isolated_gate == [(DNC, "runtime_status_or_empty_final")]
 
 
 def test_unstaged_attachment_is_rejected(tmp_path):

@@ -28,15 +28,24 @@ CLIENT_CHANNEL_IDS = frozenset({
 })
 DOCUMENT_SUFFIXES = frozenset({".csv", ".pdf", ".txt", ".docx", ".xlsx"})
 _INTERNAL = re.compile(
-    r"\b(?:ELI-\d+|kanban|Linear|config\.ya?ml|SOUL\.md|session[_ -]?key|"
-    r"stack trace|traceback|webhook|API endpoint)\b|(?:/(?:opt|home|tmp|var)/[^\s]+)",
+    r"\b(?:ELI-\d+|kanban|Linear|ACP|tool[ -]?call|shell|terminal|"
+    r"config\.ya?ml|SOUL\.md|session[_ -]?key|stack trace|traceback|"
+    r"webhook|API endpoint|job\s*(?:id|number)\s*[:#]?\s*\d+)\b|"
+    r"\b[CDGU][A-Z0-9]{10,}\b|"
+    r"(?:/(?:opt|home|tmp|var)/[^\s]+)|"
+    r"(?<!\w)(?:\.{1,2}/|[A-Za-z0-9_.-]+/)[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8}\b",
     re.IGNORECASE,
 )
 _NARRATION = re.compile(
     r"\b(?:drafting (?:the |a |your )?(?:client )?(?:Slack )?reply|"
     r"retrying (?:skill|tool|model)|loading (?:skill|tool)|"
     r"checking (?:my |the )?(?:tools|logs|internal status)|"
-    r"running (?:a |the )?(?:check|tool|command))\b", re.IGNORECASE,
+    r"running (?:a |the )?(?:check|tool|command)|"
+    r"switching to|using (?:the |a )?(?:local |ACP |shell |tool)|"
+    r"(?:i am|i'm|we are|we're) (?:checking|running|working|retrying|loading)|"
+    r"redirected current run|interrupting current task|"
+    r"(?:the )?(?:current )?(?:run|task) (?:was |is )?(?:redirected|interrupted))\b",
+    re.IGNORECASE,
 )
 _FILE_CLAIM = re.compile(
     r"\b(?:attached|attachment|enclosed|uploaded)\b|"
@@ -71,6 +80,18 @@ def final_reply_violation(text: str, *, has_attachment: bool,
     if has_attachment and not _FILE_CLAIM.search(text):
         return "attachment_not_mentioned"
     return None
+
+
+_DETAIL_REQUEST = re.compile(
+    r"\b(?:in detail|detailed (?:answer|breakdown|explanation)|full (?:details|breakdown|explanation)|"
+    r"step[ -]by[ -]step|all (?:the )?details|explain (?:everything|fully))\b",
+    re.IGNORECASE,
+)
+
+
+def detail_requested_from_message(message: str | None) -> bool:
+    """Only an explicit request in this inbound message relaxes the 60 word limit."""
+    return bool(_DETAIL_REQUEST.search(message or ""))
 
 
 def attachment_violation(images: list, media_files: list, local_files: list) -> str | None:

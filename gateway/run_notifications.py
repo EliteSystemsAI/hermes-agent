@@ -316,6 +316,7 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
         session_key: Optional[str] = None, inbound_message_id: Optional[str] = None,
         channel_prompt: Optional[str] = None,
         reply_expected: Optional[bool] = None,
+        inbound_text: Optional[str] = None,
     ) -> bool:
         """Deliver a queued response using the normal text+attachment split.
 
@@ -331,7 +332,8 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
         DECLINE returns True: that destination is not approved and must not be re-sent."""
         from gateway.run import _strip_response_attachments_for_direct_send
         from gateway.client_reply_gate import (
-            alert_client_reply_block, attachment_violation, is_client_reply_channel,
+            alert_client_reply_block, attachment_violation, detail_requested_from_message,
+            is_client_reply_channel,
             prepare_client_reply,
         )
         client_reply = is_client_reply_channel(source, channel_prompt)
@@ -359,7 +361,8 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
                 permit, violation = prepare_client_reply(
                     channel_id=source.chat_id, inbound_ts=inbound_message_id,
                     channel_prompt=channel_prompt, text=extracted.text_content,
-                    file_path=client_file_path)
+                    file_path=client_file_path,
+                    detail_requested=detail_requested_from_message(inbound_text))
             if violation:
                 await alert_client_reply_block(source.chat_id, violation)
                 return True
@@ -367,7 +370,8 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
             metadata.update(client_reply_inbound_ts=inbound_message_id,
                             client_reply_chat_type=source.chat_type,
                             client_reply_channel_prompt=channel_prompt,
-                            client_reply_permit=permit)
+                            client_reply_permit=permit,
+                            client_reply_detail_requested=detail_requested_from_message(inbound_text))
             client_text_content = extracted.text_content
             text_already_delivered = False
             stream_consumer = None
