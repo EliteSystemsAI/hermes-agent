@@ -8,6 +8,15 @@ not a git checkout. The upstream v0.23.0 tag is
 matches the live file:
 `19ff264f300a2e352f99df01b84d25b196a4f6e5852599f0403823b9922f2f47`.
 
+For independent regression review, use a scratch checkout of exact upstream
+tag `v0.23.0` at the commit above. Apply this PR's
+`eli-3483-v0.23.0.patch` and `eli-3483-v0.23.0-tests.patch` there, then
+run `PYTHONPATH=. uvx --python 3.11 --from pytest --with pytest-asyncio
+--with ruamel.yaml --with aiohttp --with psutil pytest
+tests/gateway/test_slack_connect_dedup_023.py -q`. The test patch adds the
+test to that tag checkout, so imports resolve to the actual v0.23.0 adapter,
+not the fork main tree. The six tag tests passed locally.
+
 Apply only after independent review and in a quiet window. Do not send a test
 message to a client. Run the block from this PR checkout. It stops on any
 failed check or backup. The patch is applied to a staged copy as the
