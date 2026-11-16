@@ -70,3 +70,29 @@ async def test_same_dm_ids_in_different_workspaces_still_run_twice():
     await adapter._handle_slack_message(event)
     await adapter._handle_slack_message({**event, "team": "T_CLIENT"})
     assert adapter.handle_message.await_count == 2
+
+
+@pytest.mark.parametrize("mentioned", [False, True])
+@pytest.mark.asyncio
+async def test_shared_message_with_distinct_workspace_bot_ids_runs_once(mentioned):
+    adapter = SlackAdapter(PlatformConfig(
+        enabled=True, token="fake", extra={"require_mention": mentioned}))
+    adapter._app = MagicMock()
+    adapter._app.client = AsyncMock()
+    adapter._bot_user_id = "U_ELITE_BOT"
+    adapter._team_bot_user_ids.update({
+        "T_ELITE": "U_ELITE_BOT", "T_CLIENT": "U_CLIENT_BOT"})
+    adapter._fetch_thread_context = AsyncMock(return_value=None)
+    adapter._fetch_thread_parent_text = AsyncMock(return_value="")
+    adapter.handle_message = AsyncMock()
+
+    first = _message("T_ELITE", "C_SHARED", "174.001", "170.000")
+    second = _message("T_CLIENT", "C_SHARED", "174.001", "170.000")
+    first["text"] = "<@U_ELITE_BOT> status?" if mentioned else "status?"
+    second["text"] = "<@U_CLIENT_BOT> status?" if mentioned else "status?"
+    await asyncio.gather(
+        adapter._handle_slack_message(first),
+        adapter._handle_slack_message(second),
+    )
+
+    assert adapter.handle_message.await_count == 1

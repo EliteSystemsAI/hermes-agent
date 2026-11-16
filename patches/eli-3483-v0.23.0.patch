@@ -1,7 +1,7 @@
 diff --git a/plugins/platforms/slack/adapter.py b/plugins/platforms/slack/adapter.py
 --- a/plugins/platforms/slack/adapter.py
 +++ b/plugins/platforms/slack/adapter.py
-@@ -1913,6 +1913,18 @@ class SlackAdapter(BasePlatformAdapter):
+@@ -1913,6 +1913,17 @@ class SlackAdapter(BasePlatformAdapter):
      def _workspace_event_id(team_id: str, event_id: str) -> str:
          """Scope Slack's workspace-local event/message ids for deduplication."""
          return f"{team_id}:{event_id}" if team_id else str(event_id)
@@ -15,8 +15,7 @@ diff --git a/plugins/platforms/slack/adapter.py b/plugins/platforms/slack/adapte
 +        parent = str(event.get("thread_ts") or "")
 +        if parent == message_ts:
 +            parent = ""
-+        bot_uid = self._team_bot_user_ids.get(team_id, self._bot_user_id) or ""
-+        return f"channel:{bot_uid}:{channel}:{parent}:{event_ts}"
++        return f"channel:{channel}:{parent}:{event_ts}"
 -
 +
      @staticmethod

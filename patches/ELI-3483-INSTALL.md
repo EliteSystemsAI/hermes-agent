@@ -3,39 +3,61 @@
 The running gateway is Hermes Agent 0.23.0 from Docker image
 `nousresearch/hermes-agent:latest`. It imports
 `/opt/hermes/plugins/platforms/slack/adapter.py`, which is root-owned and is
-not a git checkout. The separate Athena profile git checkout reported by
-`hermes --version` is not the running gateway source. Apply this only after
-independent review and after the already pending stopgap restart. Use one more
-graceful gateway restart in a quiet window. Do not send a test message to a
-client.
+not a git checkout. The upstream v0.23.0 tag is
+`2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19`. Its adapter SHA256
+matches the live file:
+`19ff264f300a2e352f99df01b84d25b196a4f6e5852599f0403823b9922f2f47`.
 
-From the local PR checkout, with `patches/eli-3483-v0.23.0.patch` available:
+Apply only after independent review and in a quiet window. Do not send a test
+message to a client. Run the block from this PR checkout. It stops on any
+failed check or backup. The patch is applied to a staged copy as the
+`hermes` user, then root installs the staged file because the image source is
+root-owned. No patch command runs as root.
 
 ```sh
-ssh hermes-cloud 'docker exec -i -u hermes -e HOME=/opt/data hermes sh -lc "cd /opt/hermes && git apply --check -"' < patches/eli-3483-v0.23.0.patch
-ssh hermes-cloud 'docker exec hermes cp -p /opt/hermes/plugins/platforms/slack/adapter.py /opt/data/adapter.py.bak-ELI-3483-v0.23.0'
-ssh hermes-cloud 'docker exec -i hermes sh -lc "cd /opt/hermes && git apply -"' < patches/eli-3483-v0.23.0.patch
+set -eu
+patch=patches/eli-3483-v0.23.0.patch
+target=/opt/hermes/plugins/platforms/slack/adapter.py
+backup=/opt/data/adapter.py.bak-ELI-3483-v0.23.0
+stage=/opt/data/eli-3483-stage
+sha=19ff264f300a2e352f99df01b84d25b196a4f6e5852599f0403823b9922f2f47
+
+ssh hermes-cloud 'docker exec -i -u hermes -e HOME=/opt/data hermes sh -lc "cd /opt/hermes && git apply --check -"' < "$patch"
+ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$sha  $target"
+ssh hermes-cloud "docker exec hermes sh -ec 'test ! -e $backup && cp -p $target $backup'"
+ssh hermes-cloud "docker exec hermes sha256sum $backup" | grep -Fx "$sha  $backup"
+ssh hermes-cloud "docker exec -i -u hermes -e HOME=/opt/data hermes sh -ec 'test ! -e $stage && mkdir -p $stage/plugins/platforms/slack && cp $target $stage/plugins/platforms/slack/adapter.py && cd $stage && git apply -'" < "$patch"
+ssh hermes-cloud "docker exec -u hermes -e HOME=/opt/data hermes python -c 'import ast; ast.parse(open(\"$stage/plugins/platforms/slack/adapter.py\").read())'"
+ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$sha  $target"
+ssh hermes-cloud "docker exec hermes install -o root -g root -m 644 $stage/plugins/platforms/slack/adapter.py $target"
 ssh hermes-cloud 'docker exec -u hermes -e HOME=/opt/data hermes /opt/hermes/.venv/bin/python -c "import plugins.platforms.slack.adapter as a; assert hasattr(a.SlackAdapter, \"_inbound_message_dedup_id\"); print(a.__file__)"'
 ssh hermes-cloud 'docker exec -u hermes -e HOME=/opt/data hermes /opt/hermes/.venv/bin/hermes -p default gateway restart --detach'
 ssh hermes-cloud 'docker exec -u hermes -e HOME=/opt/data hermes /opt/hermes/.venv/bin/hermes -p default gateway status'
 ```
 
 The restart command does not force interruption of active turns. If it refuses
-because work is active, wait for a quiet window and run that command again.
-After restart, observe the next organic message in each shared client channel:
-one inbound run and one final reply for each individual message ts, with a
-later follow-up in the same thread still answered. Check gateway logs and
-Slack author IDs. No extra client message is needed for verification.
+because work is active, wait for a quiet window and run only the restart and
+status commands then. Observe the next organic message in a shared client
+channel: one inbound run and one final reply for each individual message ts.
+A later follow-up in the same thread must still get its own run. Check gateway
+logs and Slack author IDs. No extra client message is needed.
 
-Rollback in a quiet window:
+Rollback is valid only while the image is still 0.23.0 and this dedupe patch
+is the only change to the adapter since the backup. Check the backup checksum
+before restoring it. Use a quiet window and restart once.
 
 ```sh
-ssh hermes-cloud 'docker exec hermes cp -p /opt/data/adapter.py.bak-ELI-3483-v0.23.0 /opt/hermes/plugins/platforms/slack/adapter.py'
+set -eu
+sha=19ff264f300a2e352f99df01b84d25b196a4f6e5852599f0403823b9922f2f47
+backup=/opt/data/adapter.py.bak-ELI-3483-v0.23.0
+target=/opt/hermes/plugins/platforms/slack/adapter.py
+ssh hermes-cloud "docker exec hermes sha256sum $backup" | grep -Fx "$sha  $backup"
+ssh hermes-cloud "docker exec hermes cp -p $backup $target"
 ssh hermes-cloud 'docker exec -u hermes -e HOME=/opt/data hermes /opt/hermes/.venv/bin/hermes -p default gateway restart --detach'
 ssh hermes-cloud 'docker exec -u hermes -e HOME=/opt/data hermes /opt/hermes/.venv/bin/hermes -p default gateway status'
 ```
 
-The `/opt/hermes` edit lives only in this container's writable layer. A Docker
-image update or container recreation replaces it. The fork PR does not deploy
-to this image by itself; bake the accepted change into a pinned image before
-the next update, or review and reapply the patch against the new version.
+The edit lives only in this container's writable layer. An image update or
+container recreation replaces it. The fork PR does not deploy to this image
+by itself; bake the accepted change into a pinned image before the next
+update, or review and reapply a version-specific patch.

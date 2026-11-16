@@ -2411,8 +2411,7 @@ class SlackAdapter(BasePlatformAdapter):
         parent = str(event.get("thread_ts") or "")
         if parent == message_ts:
             parent = ""
-        bot_uid = self._team_bot_user_ids.get(team_id, self._bot_user_id) or ""
-        return f"channel:{bot_uid}:{channel}:{parent}:{event_ts}"
+        return f"channel:{channel}:{parent}:{event_ts}"
 
     @staticmethod
     def _workspace_message_marker(team_id: str, message_id: str) -> Any:
