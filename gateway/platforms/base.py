@@ -4547,6 +4547,13 @@ class BasePlatformAdapter(ABC):
                         extracted.images, media_files, extracted.local_files)
                     if has_attachment and not violation:
                         client_file_path = (media_files[0][0] if media_files else extracted.local_files[0])
+                    if getattr(event, "_client_reply_finalized", False) is not True:
+                        violation = "missing_no_tools_finalizer"
+                    else:
+                        if client_file_path != getattr(event, "_client_reply_manifest_file_path", None):
+                            violation = "attachment_manifest_mismatch"
+                        if text_content != getattr(event, "_client_reply_final_text", None):
+                            violation = "finalizer_text_changed"
                     if event.internal or event.reply_expected is False:
                         violation = "unsolicited_client_channel_output"
                     if not violation:

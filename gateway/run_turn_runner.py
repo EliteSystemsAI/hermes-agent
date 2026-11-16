@@ -1030,14 +1030,23 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
                       getattr(agent, 'session_completion_tokens', 0) or 0)
             with notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
                 from gateway.response_filters import silence_allowed
+                from gateway.client_reply_gate import is_client_reply_channel
+                client_reply = is_client_reply_channel(ctx.source, ctx.channel_prompt)
                 # Where a bare marker would become the "needed a reply" warning, the agent ends a
                 # marker that follows a written reply on that reply, before transform/persistence.
                 agent._silence_marker_needs_reply = not silence_allowed(
                     ctx.persist_user_display_kind, ctx.reply_expected)
+                agent._client_reply_capture_tool_success = client_reply
                 try:
                     result = agent.run_conversation(api_message, **kwargs)
                 finally:
                     agent._silence_marker_needs_reply = False
+                    agent._client_reply_capture_tool_success = False
+            if client_reply:
+                from gateway.client_reply_finalizer import finalize_client_turn
+                if not isinstance(result, dict):
+                    result = {"final_response": "", "failed": True, "messages": []}
+                result = finalize_client_turn(agent, result, ctx, len(agent_history))
             if captured is not None:
                 incoming = max(0, (getattr(agent, 'session_prompt_tokens', 0) or 0) - before[0])
                 outgoing = max(0, (getattr(agent, 'session_completion_tokens', 0) or 0) - before[1])

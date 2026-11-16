@@ -255,6 +255,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
                 run_generation=run_generation, event_message_id=self._reply_anchor_for_event(event),
                 inbound_message_id=str(event.message_id) if event.message_id else None,
                 channel_prompt=_turn_channel_prompt, moa_config=getattr(event, "_moa_config", None),
+                client_message=event.text,
                 title_user_message=prepared.title_user_message,
                 persist_user_message=prepared.persist_user_message,
                 persist_user_timestamp=prepared.persist_user_timestamp,
@@ -273,6 +274,10 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
             # message's id or it collides with an earlier turn's row carrying the same text. Reply
             # routing is untouched: the anchor still comes from this event.
             if isinstance(agent_result, dict):
+                event._client_reply_finalized = agent_result.get("client_reply_finalized") is True
+                event._client_reply_manifest_file_path = agent_result.get("client_reply_manifest_file_path")
+                event._client_reply_detail_requested = agent_result.get("client_reply_detail_requested") is True
+                event._client_reply_final_text = agent_result.get("client_reply_final_text")
                 _terminal_inbound = agent_result.get("queued_terminal_inbound_id")
                 if _terminal_inbound:
                     event.ledger_message_id = str(_terminal_inbound)
@@ -1670,6 +1675,9 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
                     session_key=session_key, inbound_message_id=turn_ctx.inbound_message_id,
                     channel_prompt=getattr(turn_ctx, "channel_prompt", None), reply_expected=turn_ctx.reply_expected,
                     inbound_text=turn_ctx.message,
+                    client_finalized=_delivery_result.get("client_reply_finalized") is True,
+                    client_manifest_file_path=_delivery_result.get("client_reply_manifest_file_path"),
+                    client_final_text=_delivery_result.get("client_reply_final_text"),
                 )
             except Exception as e:
                 logger.warning("Failed to send first response before queued message: %s", e)
@@ -1820,6 +1828,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
                 run_generation=run_generation, _interrupt_depth=_interrupt_depth + 1,
                 event_message_id=next_message_id, inbound_message_id=next_inbound_id,
                 channel_prompt=next_channel_prompt, message_type=next_message_type,
+                client_message=getattr(pending_event, "text", None),
                 persist_user_message=next_persist_message,
                 persist_user_display_kind=next_display_kind,
                 reply_expected=next_reply_expected,
@@ -2152,6 +2161,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         run_generation: Optional[int] = None, _interrupt_depth: int = 0,
         event_message_id: Optional[str] = None, inbound_message_id: Optional[str] = None,
         channel_prompt: Optional[str] = None, moa_config: Optional[dict] = None,
+        client_message: Optional[str] = None,
         persist_user_message: Optional[Any] = None, persist_user_timestamp: Optional[float] = None,
         persist_user_display_kind: Optional[str] = None, message_type: Optional[str] = None,
         persist_user_display_metadata: Optional[dict] = None,
@@ -2202,7 +2212,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
             run_generation=run_generation, context_prompt=context_prompt, history=history,
             session_id=session_id, _interrupt_depth=_interrupt_depth,
             event_message_id=event_message_id, inbound_message_id=inbound_message_id,
-            channel_prompt=channel_prompt, moa_config=moa_config,
+            channel_prompt=channel_prompt, moa_config=moa_config, client_message=client_message,
             title_user_message=title_user_message,
             persist_user_message=persist_user_message,
             persist_user_timestamp=persist_user_timestamp,

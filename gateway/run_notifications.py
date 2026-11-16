@@ -317,6 +317,9 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
         channel_prompt: Optional[str] = None,
         reply_expected: Optional[bool] = None,
         inbound_text: Optional[str] = None,
+        client_finalized: bool = False,
+        client_manifest_file_path: Optional[str] = None,
+        client_final_text: Optional[str] = None,
     ) -> bool:
         """Deliver a queued response using the normal text+attachment split.
 
@@ -355,6 +358,13 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
             if has_attachment and not violation:
                 client_file_path = (extracted.media_files[0][0] if extracted.media_files
                                     else extracted.local_files[0])
+            if not client_finalized:
+                violation = "missing_no_tools_finalizer"
+            else:
+                if client_file_path != client_manifest_file_path:
+                    violation = "attachment_manifest_mismatch"
+                if extracted.text_content != client_final_text:
+                    violation = "finalizer_text_changed"
             if reply_expected is False:
                 violation = "unsolicited_client_channel_output"
             if not violation:

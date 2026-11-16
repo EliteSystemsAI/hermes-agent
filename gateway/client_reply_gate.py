@@ -47,6 +47,12 @@ _NARRATION = re.compile(
     r"(?:the )?(?:current )?(?:run|task) (?:was |is )?(?:redirected|interrupted))\b",
     re.IGNORECASE,
 )
+_STATUS = re.compile(
+    r"(?:\b(?:status|progress)\s*:|\b(?:still working|working (?:on|through) (?:it|this|that)|"
+    r"in progress|processing your|queued for|waiting for (?:a |the )?(?:tool|model|run)|"
+    r"current run|current task)\b)",
+    re.IGNORECASE,
+)
 _FILE_CLAIM = re.compile(
     r"\b(?:attached|attachment|enclosed|uploaded)\b|"
     r"\b(?:here(?:'s| is)|sent|sending)\b[^.!?\n]{0,80}\b"
@@ -71,7 +77,7 @@ def final_reply_violation(text: str, *, has_attachment: bool,
         return "multiple_questions"
     if "\u2014" in text or "\u2013" in text:
         return "dash_punctuation"
-    if _NARRATION.search(text):
+    if _NARRATION.search(text) or _STATUS.search(text):
         return "work_narration"
     if _INTERNAL.search(text) or "```" in text:
         return "internal_detail"

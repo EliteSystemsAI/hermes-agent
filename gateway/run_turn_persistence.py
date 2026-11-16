@@ -184,7 +184,9 @@ class GatewayTurnPersistenceMixin:
         # Fix for #18765.
         if client_runtime_failure:
             from gateway.client_reply_gate import alert_client_reply_block
-            await alert_client_reply_block(source.chat_id, "runtime_status_or_empty_final")
+            await alert_client_reply_block(
+                source.chat_id, agent_result.get("client_reply_finalizer_block") or
+                "runtime_status_or_empty_final")
             response = ""
         elif not _intentional_silence:
             response = strip_trailing_silence_marker(response)

@@ -28,11 +28,14 @@ CONFIRMED_CLIENT_CHANNELS = {
 def _event(ts="1731729660.000100", *, prompt=PROMPT, team="T_PRIMARY"):
     # Captured live DNC shape: SessionSource.chat_type is group and thread_id is
     # the root, while message_id is the individual inbound message timestamp.
-    return MessageEvent(
+    event = MessageEvent(
         text="Please send the export", message_id=ts, channel_prompt=prompt,
         source=SessionSource(platform=Platform.SLACK, chat_id=DNC, chat_type="group",
                              thread_id="1731729000.000001", scope_id=team),
     )
+    event._client_reply_finalized = True
+    event._client_reply_manifest_file_path = None
+    return event
 
 
 @pytest.fixture
@@ -88,6 +91,8 @@ def test_final_text_rejections(text, reason):
     "I'm checking the drawings now.",
     "Redirected current run.",
     "Interrupting current task.",
+    "Status: still working on it.",
+    "Your request is queued for processing.",
 ])
 def test_grok_exact_internal_narration_examples_are_blocked(text):
     assert gate.final_reply_violation(text, has_attachment=False) in {
@@ -238,11 +243,40 @@ async def test_narration_final_never_reaches_ledger_or_tts(isolated_gate):
     adapter.send_final_ledgered = AsyncMock(side_effect=AssertionError("ledger send called"))
     adapter._wants_auto_tts = lambda *a: (_ for _ in ()).throw(AssertionError("TTS ran"))
     event = _event()
+    event._client_reply_final_text = "Thanks. Drafting the client Slack reply now."
     key = "agent:main:slack:group:" + DNC
     adapter._active_sessions[key] = asyncio.Event()
     await adapter._process_message_background(event, key)
     assert adapter.sent == []
     assert isolated_gate == [(DNC, "work_narration")]
+
+
+@pytest.mark.asyncio
+async def test_plain_intake_prose_without_no_tools_finalizer_fails_closed(isolated_gate):
+    adapter = _Adapter()
+    adapter._message_handler = AsyncMock(return_value="I will send the figures today.")
+    adapter.send_final_ledgered = AsyncMock(side_effect=AssertionError("ledger send called"))
+    event = _event()
+    event._client_reply_finalized = False
+    key = "agent:main:slack:group:" + DNC
+    adapter._active_sessions[key] = asyncio.Event()
+    await adapter._process_message_background(event, key)
+    assert adapter.sent == []
+    assert isolated_gate == [(DNC, "missing_no_tools_finalizer")]
+
+
+@pytest.mark.asyncio
+async def test_text_changed_after_finalizer_fails_closed(isolated_gate):
+    adapter = _Adapter()
+    adapter._message_handler = AsyncMock(return_value="The total is $540. Status: still working.")
+    adapter.send_final_ledgered = AsyncMock(side_effect=AssertionError("ledger send called"))
+    event = _event()
+    event._client_reply_final_text = "The total is $540."
+    key = "agent:main:slack:group:" + DNC
+    adapter._active_sessions[key] = asyncio.Event()
+    await adapter._process_message_background(event, key)
+    assert adapter.sent == []
+    assert isolated_gate == [(DNC, "finalizer_text_changed")]
 
 
 @pytest.mark.asyncio
