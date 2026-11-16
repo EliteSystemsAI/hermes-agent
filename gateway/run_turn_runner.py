@@ -237,6 +237,10 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         ctx = self._ctx
         if ctx.mute_notification_reply:
             return None, None, None, False
+        from gateway.client_reply_gate import is_client_reply_channel
+        if is_client_reply_channel(ctx.source, ctx.channel_prompt):
+            # A client final must be checked as a complete text and attachment set.
+            return None, None, None, False
         stream_consumer = None
         # The streaming-TTS consumer is created on the outer loop thread before run_sync launches;
         # run_sync only reads it via the holder for delta-callback wiring.

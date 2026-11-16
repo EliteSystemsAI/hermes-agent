@@ -145,7 +145,14 @@ def _thread_metadata_for_source(source, reply_to_message_id: str | None = None) 
 
 def _thread_metadata_for_event(event) -> dict | None:
     """``_thread_metadata_for_source`` for an event, anchored on its reply id."""
-    return _thread_metadata_for_source(event.source, _reply_anchor_for_event(event))
+    metadata = _thread_metadata_for_source(event.source, _reply_anchor_for_event(event)) or {}
+    if _platform_name(getattr(event.source, "platform", None)) == "slack":
+        # The individual inbound TS identifies this reply. The thread root remains routing only.
+        metadata["client_reply_inbound_ts"] = getattr(event, "message_id", None)
+        metadata["client_reply_chat_type"] = getattr(event.source, "chat_type", None)
+        metadata["client_reply_channel_prompt"] = getattr(event, "channel_prompt", None)
+        metadata["client_reply_bot_id"] = getattr(event, "bot_id", None)
+    return metadata or None
 
 
 def _mark_notify_metadata(metadata: dict | None) -> dict:
@@ -4280,7 +4287,8 @@ class BasePlatformAdapter(ABC):
 
     async def send_final_ledgered(
         self, event: MessageEvent, session_key: str, text_content: str, metadata: dict[str, Any], *,
-        reply_to: Optional[str], is_ephemeral_response: bool = False,
+        reply_to: Optional[str], is_ephemeral_response: bool = False, has_attachment: bool = False,
+        file_path: str | None = None,
     ) -> "tuple[SendResult, BasePlatformAdapter]":
         """The delivery-ledger bracket every final text goes through, on the CURRENT transport
         (a reconnect may have replaced this adapter): record the obligation before the send,
@@ -4289,6 +4297,18 @@ class BasePlatformAdapter(ABC):
         supplies the source and the ledger identity (``ledger_message_id`` or ``message_id``).
         Returns the result with the adapter that sent it: that adapter owns ``result.message_id``
         (an ephemeral delete must go to the same transport)."""
+        from gateway.client_reply_gate import (
+            alert_client_reply_block, final_reply_violation, is_client_reply_channel,
+        )
+        if is_client_reply_channel(event.source, event.channel_prompt):
+            reason = final_reply_violation(text_content, has_attachment=bool(file_path))
+            if has_attachment and not file_path:
+                reason = "attachment_without_bundle"
+            if not (metadata or {}).get("client_reply_permit"):
+                reason = reason or "missing_reply_permit"
+            if reason:
+                await alert_client_reply_block(event.source.chat_id, reason)
+                return SendResult(success=False, error=reason), self
         delivery_adapter = self._final_delivery_adapter(event.source)
         logger.info("[%s] Sending response (%d chars) to %s", delivery_adapter.name,
                     len(text_content), event.source.chat_id)
@@ -4296,8 +4316,14 @@ class BasePlatformAdapter(ABC):
             event, session_key, text_content, delivery_adapter, is_ephemeral_response)
         if obligation_id is not None:
             await self._release_turn_marker(event)  # the ledger now owns the crash recovery
-        result = await delivery_adapter._send_with_retry(
-            chat_id=event.source.chat_id, content=text_content, reply_to=reply_to, metadata=metadata)
+        if file_path:
+            # One Slack upload carries file and caption. Never post text before a file failure.
+            result = await delivery_adapter.send_document(
+                chat_id=event.source.chat_id, file_path=file_path, caption=text_content,
+                reply_to=reply_to, metadata=metadata)
+        else:
+            result = await delivery_adapter._send_with_retry(
+                chat_id=event.source.chat_id, content=text_content, reply_to=reply_to, metadata=metadata)
         stop_reply_clock(delivery_adapter, event.source.chat_id, result)
         if obligation_id is not None:
             await self._finalize_delivery_obligation(obligation_id, result, event, delivery_adapter)
@@ -4313,11 +4339,13 @@ class BasePlatformAdapter(ABC):
 
     async def _send_final_text(
         self, event: MessageEvent, session_key: str, text_content: str, metadata: dict[str, Any],
-        is_ephemeral_response: bool, ephemeral_ttl: int, record_delivery: Callable) -> None:
+        is_ephemeral_response: bool, ephemeral_ttl: int, record_delivery: Callable, *,
+        has_attachment: bool = False, file_path: str | None = None) -> None:
         """Normal-lane final: the ledger bracket plus the message-id owner's ephemeral delete."""
         result, delivery_adapter = await self.send_final_ledgered(
             event, session_key, text_content, metadata,
-            reply_to=_reply_anchor_for_event(event), is_ephemeral_response=is_ephemeral_response)
+            reply_to=_reply_anchor_for_event(event), is_ephemeral_response=is_ephemeral_response,
+            has_attachment=has_attachment, file_path=file_path)
         record_delivery(result)
         if ephemeral_ttl and ephemeral_ttl > 0 and result.success and result.message_id:
             delivery_adapter._schedule_ephemeral_delete(event.source.chat_id, result.message_id, ephemeral_ttl)
@@ -4326,6 +4354,10 @@ class BasePlatformAdapter(ABC):
         """Tell the user a turn failed rather than leaving radio silence (last resort:
         a failing notice is logged, never raised). Returns the thread metadata used."""
         _thread_metadata = None
+        from gateway.client_reply_gate import alert_client_reply_block, is_client_reply_channel
+        if is_client_reply_channel(event.source, event.channel_prompt):
+            await alert_client_reply_block(event.source.chat_id, "turn_error")
+            return _thread_metadata_for_event(event)
         try:
             _thread_metadata = _thread_metadata_for_event(event)
             error_detail = str(e)[:300] if str(e) else t("gateway.notify.turn_error_no_details")
@@ -4498,10 +4530,40 @@ class BasePlatformAdapter(ABC):
                 extracted = await self._extract_response_content(
                     response, event, session_key, is_ephemeral_response=is_ephemeral_response)
                 text_content, media_files = extracted.text_content, extracted.media_files
+                from gateway.client_reply_gate import (
+                    alert_client_reply_block, attachment_violation, is_client_reply_channel,
+                    prepare_client_reply,
+                )
+                client_reply = is_client_reply_channel(event.source, event.channel_prompt)
+                client_file_path = None
+                if client_reply:
+                    has_attachment = bool(extracted.images or media_files or extracted.local_files)
+                    violation = attachment_violation(
+                        extracted.images, media_files, extracted.local_files)
+                    if has_attachment and not violation:
+                        client_file_path = (media_files[0][0] if media_files else extracted.local_files[0])
+                    if event.internal or event.reply_expected is False:
+                        violation = "unsolicited_client_channel_output"
+                    if not violation:
+                        permit, violation = prepare_client_reply(
+                            channel_id=event.source.chat_id, inbound_ts=event.message_id,
+                            channel_prompt=event.channel_prompt, text=text_content,
+                            file_path=client_file_path)
+                    if violation:
+                        await alert_client_reply_block(event.source.chat_id, violation)
+                        text_content = ""
+                        extracted.images = []
+                        extracted.media_files = []
+                        extracted.local_files = []
+                        media_files = []
+                        client_file_path = None
+                    else:
+                        _thread_metadata = dict(_thread_metadata or {})
+                        _thread_metadata["client_reply_permit"] = permit
                 # Final content gets notify=True; typing metadata stays unmarked (thread-strict).
                 _final_thread_metadata = _mark_notify_metadata(_thread_metadata)
                 _tts_paths, _tts_requested_path = [], None
-                if self._wants_auto_tts(
+                if not client_reply and self._wants_auto_tts(
                         event, session_key, interrupt_event, text_content, media_files):
                     _tts_paths, _tts_requested_path = await self._synthesize_auto_tts(text_content)
                 # TTS plays before text; generated files are removed afterwards.
@@ -4532,11 +4594,15 @@ class BasePlatformAdapter(ABC):
                 if text_content and not _tts_caption_delivered:
                     await self._send_final_text(
                         event, session_key, text_content, _final_thread_metadata,
-                        is_ephemeral_response, _ephemeral_ttl, _record_delivery)
-                await self._deliver_attachments(
-                    event, extracted, _final_thread_metadata,
-                    anything_sent=delivery_attempted or _tts_caption_delivered,
-                    record_delivery=_record_delivery)
+                        is_ephemeral_response, _ephemeral_ttl, _record_delivery,
+                        has_attachment=bool(client_file_path) if client_reply else bool(
+                            extracted.images or extracted.media_files or extracted.local_files),
+                        file_path=client_file_path)
+                if not client_reply:
+                    await self._deliver_attachments(
+                        event, extracted, _final_thread_metadata,
+                        anything_sent=delivery_attempted or _tts_caption_delivered,
+                        record_delivery=_record_delivery)
             await self._release_turn_marker(event)
             processing_ok = delivery_succeeded if delivery_attempted else not bool(response)
             # Clean up the per-turn streaming-TTS flag.
