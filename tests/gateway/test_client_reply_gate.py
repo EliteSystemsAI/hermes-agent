@@ -101,6 +101,12 @@ def test_final_text_rejections(text, reason):
     "I saved docs/tender for you.",
     "Checking the drawings now.",
     "Local shell is done.",
+    "Checking the drawings today.",
+    "Looking into the drawings now.",
+    "Using exec to total the tender.",
+    "I used the shell.",
+    "Using terminal to add this up.",
+    "Status update: the price is ready.",
 ])
 def test_grok_exact_internal_narration_examples_are_blocked(text):
     assert gate.final_reply_violation(text, has_attachment=False) in {
@@ -112,6 +118,14 @@ def test_grok_exact_internal_narration_examples_are_blocked(text):
     "The ACP panel is included in the drawing.",
     "We are available 24/7.",
     "The temperature on site is fine.",
+    "Bolt size is M12/1.75.",
+    "Cable is 2.5/1.5mm.",
+    "Insulation is R2.5/R4.0 in the roof.",
+    "The ceiling height is 2.4/2.7m.",
+    "Between 8.30/9.00 is too tight.",
+    "The shell is ready.",
+    "The building shell is ready for cladding.",
+    "No tool found in the ceiling.",
 ])
 def test_client_subject_words_are_not_internal_details(text):
     assert gate.final_reply_violation(text, has_attachment=False) is None

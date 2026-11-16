@@ -27,6 +27,8 @@ CLIENT_CHANNEL_IDS = frozenset({
     "C0BG8HQMYHH", "C0BP7GGCEAK", "C0BCDP18Z46",
 })
 DOCUMENT_SUFFIXES = frozenset({".csv", ".pdf", ".txt", ".docx", ".xlsx"})
+# These patterns are supplemental. The source-checked handoff, no-tools
+# finalizer and fail-closed send permit carry the client delivery boundary.
 _INTERNAL = re.compile(
     r"\b(?:ELI-\d+|kanban|Linear|tool[ -]?call|"
     r"(?:ACP|shell|terminal)\s+(?:tool|command|session|format|output)|"
@@ -35,7 +37,8 @@ _INTERNAL = re.compile(
     r"\b[CDGTU](?=[A-Z0-9]*\d[A-Z0-9]*\b)[A-Z0-9]{10,}\b|"
     r"(?:/(?:opt|home|tmp|var)/[^\s]+)|"
     r"(?<!\w)(?:\.{1,2}/|(?:docs|exports)/)[A-Za-z0-9_./-]+\b|"
-    r"(?<!\w)[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8}\b",
+    r"(?<!\w)[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+\."
+    r"(?:pdf|csv|txt|docx|xlsx|py|ya?ml|md|json|srt|mp4|png|jpe?g|svg|html|js|ts|sh|log)\b",
     re.IGNORECASE,
 )
 _NARRATION = re.compile(
@@ -43,17 +46,19 @@ _NARRATION = re.compile(
     r"retrying (?:skill|tool|model)|loading (?:skill|tool)|"
     r"checking (?:my |the )?(?:tools|logs|internal status)|"
     r"running (?:a |the )?(?:check|tool|command)|"
-    r"switching to|using (?:the |a )?(?:(?:local )?shell|ACP (?:tool|format)|tool)\b|"
-    r"(?:the |a )?(?:shell |ACP )?tool (?:returned|reported|found)|"
-    r"(?:local |the )?shell (?:is|was) (?:done|finished|ready|running)|"
-    r"checking (?:the |your |my )?(?:drawings|plans|tender|files?|documents|records|figures|status) now|"
+    r"switching to|using (?:the |a )?(?:(?:local )?shell|terminal|exec|ACP (?:tool|format)|tool)\b|"
+    r"(?:i|we) used (?:the |a )?(?:local )?(?:shell|terminal|exec)\b|"
+    r"(?:the |a )?(?:shell |ACP )?tool (?:returned|reported)|"
+    r"(?:the )?local shell (?:is|was) (?:done|finished|ready|running)|"
+    r"(?:checking|looking into) (?:the |your |my )?"
+    r"(?:drawings|plans|tender|files?|documents|records|figures|status) (?:now|today)|"
     r"(?:i am|i'm|we are|we're) (?:checking|running|working|retrying|loading)|"
     r"redirected current run|interrupting current task|"
     r"(?:the )?(?:current )?(?:run|task) (?:was |is )?(?:redirected|interrupted))\b",
     re.IGNORECASE,
 )
 _STATUS = re.compile(
-    r"(?:\b(?:status|progress)\s*:|\b(?:still working|working (?:on|through) (?:it|this|that)|"
+    r"(?:\b(?:status(?: update)?|progress)\s*:|\b(?:still working|working (?:on|through) (?:it|this|that)|"
     r"in progress|processing your|queued for|waiting for (?:a |the )?(?:tool|model|run)|"
     r"current run|current task|looking into (?:that|this|it) now|"
     r"on it[,!. ]+back shortly)\b)",
