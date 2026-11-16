@@ -1,0 +1,522 @@
+diff --git c/plugins/platforms/slack/adapter.py w/plugins/platforms/slack/adapter.py
+index 1d97d7d442..acb62dc5b3 100644
+--- c/plugins/platforms/slack/adapter.py
++++ w/plugins/platforms/slack/adapter.py
+@@ -1521,6 +1521,8 @@ class SlackAdapter(BasePlatformAdapter):
+ 
+         See #19688.
+         """
++        if self._client_reply_protected(chat_id):
++            return SendResult(success=False, error="client_reply_denied")
+         user_id = ctx.get("user_id", "")
+         if not user_id:
+             return SendResult(success=False, error="no user_id in slash context for postEphemeral")
+@@ -1765,6 +1767,8 @@ class SlackAdapter(BasePlatformAdapter):
+ 
+     async def connect(self, *, is_reconnect: bool = False) -> bool:
+         """Connect to Slack via Socket Mode."""
++        from gateway.client_reply_gate import configure_client_reply_alert_sender
++        configure_client_reply_alert_sender(None)
+         if not SLACK_AVAILABLE:
+             logger.error("[Slack] slack-bolt not installed. Run: pip install slack-bolt")
+             self._set_fatal_error("missing_dependency", "slack-bolt not installed", retryable=False)
+@@ -1809,6 +1813,8 @@ class SlackAdapter(BasePlatformAdapter):
+             _apply_slack_proxy(self._app.client, proxy_url)
+             for token in bot_tokens:
+                 await self._authenticate_workspace(token, proxy_url)
++            if "T09KH5NV5SA" in self._team_clients:
++                configure_client_reply_alert_sender(self._send_client_reply_alert)
+             self._register_bolt_handlers()
+             # _running=True only once the handler is alive (watchdog needs the live
+             # task); on failure keep it False so ``finally`` releases the lock.
+@@ -1870,6 +1876,9 @@ class SlackAdapter(BasePlatformAdapter):
+     async def create_handoff_thread(self, parent_chat_id: str, name: str) -> Optional[str]:
+         """Post a seed message and return its ``ts`` as the handoff ``thread_id``. Slack threads
+         anchor to a parent message, not a channel-level object. Returns ``None`` on failure."""
++        denied = await self._authorize_client_reply_transport(parent_chat_id, "draft")
++        if denied:
++            return None
+         if not self._app:
+             return None
+         try:
+@@ -1889,6 +1898,8 @@ class SlackAdapter(BasePlatformAdapter):
+ 
+     async def disconnect(self) -> None:
+         """Disconnect from Slack."""
++        from gateway.client_reply_gate import configure_client_reply_alert_sender
++        configure_client_reply_alert_sender(None)
+         self._running = False
+         # Seal dangling native streams so no live-typing indicator survives a restart.
+         for key, stream in list(self._active_streams.items()):
+@@ -1933,6 +1944,101 @@ class SlackAdapter(BasePlatformAdapter):
+         """Scope Slack's workspace-local event/message ids for deduplication."""
+         return f"{team_id}:{event_id}" if team_id else str(event_id)
+ 
++    def _inbound_message_dedup_id(self, event: dict, team_id: str, event_ts: str) -> str:
++        """Identify one channel message across Slack Connect workspace deliveries."""
++        channel = str(event.get("channel") or "")
++        if not channel or event.get("channel_type") in {"im", "mpim"} or channel.startswith("D"):
++            return self._workspace_event_id(team_id, event_ts)
++        message_ts = str(event.get("ts") or "")
++        parent = str(event.get("thread_ts") or "")
++        if parent == message_ts:
++            parent = ""
++        return f"channel:{channel}:{parent}:{event_ts}"
++
++    async def _authorize_client_reply_transport(
++        self, channel_id: str, operation: str, *, text: str = "",
++        file_path: Optional[str] = None, metadata: Optional[dict[str, Any]] = None,
++    ) -> Optional[SendResult]:
++        """Return a failed result when the shared client reply gate denies an outbound write."""
++        team_id = self._metadata_team_id(metadata)
++        bot_id = (
++            self._team_bot_user_ids.get(team_id)
++            or self._bot_user_id
++            or ""
++        )
++        claimed_bot_id = (metadata or {}).get("client_reply_bot_id")
++        if claimed_bot_id and claimed_bot_id != bot_id:
++            bot_id = ""  # A caller cannot pick a new claim identity to bypass dedupe.
++        try:
++            from gateway.client_reply_gate import authorize_slack_egress
++            decision = await authorize_slack_egress(
++                channel_id=channel_id, bot_id=str(bot_id), operation=operation,
++                text=text, file_path=file_path, metadata=metadata)
++        except Exception:
++            logger.exception("[Slack] Client reply egress gate failed for %s", channel_id)
++            return SendResult(success=False, error="client_reply_gate_error")
++        if not decision.allowed:
++            logger.warning(
++                "[Slack] Client reply %s blocked in %s: %s",
++                operation, channel_id, decision.reason or "denied")
++            return SendResult(success=False, error=decision.reason or "client_reply_denied")
++        return None
++
++    async def _send_client_reply_alert(self, channel_id: str, reason: str) -> None:
++        """Notify EJ as Legend in his DM and notify Zac in his DM."""
++        client = self._team_clients["T09KH5NV5SA"]
++        alert = (
++            f"Hermes blocked a client reply in {channel_id}: {reason}. "
++            "Please review the gateway logs."
++        )
++        ej_notified = False
++        for attempt in range(2):
++            try:
++                response = await client.chat_postMessage(
++                    channel="D0BJHG8SWN8", text=alert)
++                if not response.get("ok"):
++                    raise RuntimeError("Slack did not confirm EJ DM delivery")
++                ej_notified = True
++                break
++            except Exception:
++                logger.warning(
++                    "[Slack] EJ client reply alert attempt %d failed",
++                    attempt + 1, exc_info=True)
++        zac_dm = await self._ensure_dm_conversation(
++            "U09KCRR9TGT", team_id="T09KH5NV5SA")
++        if not str(zac_dm).startswith("D"):
++            raise RuntimeError("Could not open Zac DM for client reply alert")
++        zac_alert = (
++            alert if ej_notified else
++            f"{alert} EJ's DM failed twice. Please notify EJ directly."
++        )
++        response = await client.chat_postMessage(channel=zac_dm, text=zac_alert)
++        if not response.get("ok"):
++            raise RuntimeError("Slack did not confirm Zac DM delivery")
++        if not ej_notified:
++            logger.error("[Slack] EJ DM alert failed twice; Zac DM fallback was delivered")
++
++    @staticmethod
++    def _client_reply_protected(chat_id: str) -> bool:
++        from gateway.client_reply_gate import CLIENT_CHANNEL_IDS
++        return str(chat_id or "") in CLIENT_CHANNEL_IDS
++
++    def _start_typing_refresh(self, event, interrupt_event, metadata):
++        """Do not register a status refresh for a protected client channel."""
++        if self._client_reply_protected(event.source.chat_id):
++            return None
++        return super()._start_typing_refresh(event, interrupt_event, metadata)
++
++    async def _keep_typing(
++        self, chat_id: str, interval: float = 2.0, metadata=None,
++        stop_event: Optional[asyncio.Event] = None,
++    ) -> None:
++        """Backstop direct typing refresh calls outside the turn registrar."""
++        if self._client_reply_protected(chat_id):
++            return
++        await super()._keep_typing(
++            chat_id, interval=interval, metadata=metadata, stop_event=stop_event)
++
+     @staticmethod
+     def _workspace_message_marker(team_id: str, message_id: str) -> Any:
+         """Return an in-memory routing marker without changing legacy no-team tests."""
+@@ -2064,6 +2170,10 @@ class SlackAdapter(BasePlatformAdapter):
+         reply_to: Optional[str] = None, metadata: Optional[dict[str, Any]] = None,
+         fallback_text: Optional[str] = None) -> SendResult:
+         """Start or update a Slack-native plan/task progress stream."""
++        denied = await self._authorize_client_reply_transport(
++            chat_id, "draft", text=fallback_text or "", metadata=metadata)
++        if denied:
++            return denied
+         title = title or t("platform.slack.task_card.title")
+         if not self._app:
+             return SendResult(success=False, error="Not connected")
+@@ -2153,6 +2263,8 @@ class SlackAdapter(BasePlatformAdapter):
+                 return
+             stream.stopped = True
+             try:
++                if self._client_reply_protected(stream.channel):
++                    return
+                 if self._app and stream.stream_ts:
+                     await self._get_client(stream.channel, team_id=stream.team_id).api_call(
+                         "chat.stopStream", json={"channel": stream.channel, "ts": stream.stream_ts})
+@@ -2214,19 +2326,26 @@ class SlackAdapter(BasePlatformAdapter):
+         blocked = self._outbound_blocked(chat_id, "outbound generic send to")
+         if blocked:
+             return blocked
++        from gateway.client_reply_gate import CLIENT_CHANNEL_IDS
++        protected = chat_id in CLIENT_CHANNEL_IDS
+         chat_id = await self._dm_target(chat_id, metadata)
+         thread_ts = None
+         try:
+             team_id = self._metadata_team_id(metadata)
+             slash_ctx = self._pop_slash_context(chat_id, team_id)
+-            if slash_ctx:
++            if slash_ctx and protected:
++                denied = await self._authorize_client_reply_transport(
++                    chat_id, "draft", text=content, metadata=metadata)
++                return denied or SendResult(success=False, error="client_reply_denied")
++            if slash_ctx and not protected:
+                 return await self._send_slash_reply(chat_id, slash_ctx, content, metadata)
+             # An active native stream that this content finalizes IS the final
+             # message: seal it instead of posting a duplicate.
+-            stream_result = await self._try_finalize_stream(chat_id, content, metadata)
++            stream_result = (
++                None if protected else await self._try_finalize_stream(chat_id, content, metadata))
+             if stream_result is not None:
+                 return stream_result
+-            formatted = self.format_message(content)
++            formatted = content if protected else self.format_message(content)
+             if not formatted or not formatted.strip():
+                 # Slack returns ``no_text`` for blank posts; still the end of a
+                 # delivery attempt, so the "is thinking..." status must clear.
+@@ -2235,8 +2354,13 @@ class SlackAdapter(BasePlatformAdapter):
+                 # "(empty)" final responses are filtered upstream), the assistant thread status must not
+                 # stay stuck on "is thinking..." (#24117).
+                 return SendResult(success=True)
++            denied = await self._authorize_client_reply_transport(
++                chat_id, "text", text=formatted, metadata=metadata)
++            if denied:
++                return denied
+             thread_ts = self._resolve_thread_ts(reply_to, metadata)
+-            last_result = await self._post_chunks(chat_id, team_id, content, formatted, thread_ts)
++            last_result = await self._post_chunks(
++                chat_id, team_id, content, formatted, thread_ts, raw_single=protected)
+             # Clear Slack Assistant status as soon as the final message is posted.
+             if thread_ts:
+                 await self.stop_typing(chat_id, metadata=metadata)
+@@ -2264,15 +2388,17 @@ class SlackAdapter(BasePlatformAdapter):
+                 retry_after=self._retry_after_from_exc(e) if _retryable else None)
+ 
+     async def _post_chunks(
+-        self, chat_id: str, team_id: str, content: str, formatted: str, thread_ts: Optional[str]
++        self, chat_id: str, team_id: str, content: str, formatted: str,
++        thread_ts: Optional[str], *, raw_single: bool = False,
+     ) -> Any:
+         """``chat.postMessage`` each ``MAX_MESSAGE_LENGTH`` chunk; returns the last response.
+         Block Kit only for single-chunk messages (a >39k response is pathological for the 50-block /
+         3000-char limits); ``text`` stays the notification/accessibility fallback. With
+         ``reply_broadcast`` only the first chunk is also posted to the main channel."""
+-        chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
++        chunks = [formatted] if raw_single else self.truncate_message(
++            formatted, self.MAX_MESSAGE_LENGTH)
+         broadcast = self.config.extra.get("reply_broadcast", False)
+-        blocks = self._maybe_blocks(content) if len(chunks) == 1 else None
++        blocks = self._maybe_blocks(content) if len(chunks) == 1 and not raw_single else None
+         last_result = None
+         for i, chunk in enumerate(chunks):
+             kwargs = {
+@@ -2324,6 +2450,10 @@ class SlackAdapter(BasePlatformAdapter):
+         blocked = self._outbound_blocked(chat_id, "outbound generic ephemeral notice to")
+         if blocked:
+             return blocked
++        denied = await self._authorize_client_reply_transport(
++            chat_id, "text", text=content, metadata=metadata)
++        if denied:
++            return denied
+         if not chat_id or not user_id:
+             return SendResult(success=False, error="chat_id and user_id are required")
+         try:
+@@ -2381,6 +2511,10 @@ class SlackAdapter(BasePlatformAdapter):
+         blocked = self._outbound_blocked(chat_id, "message edit in")
+         if blocked:
+             return blocked
++        denied = await self._authorize_client_reply_transport(
++            chat_id, "edit", text=content, metadata=metadata)
++        if denied:
++            return denied
+         try:
+             formatted = self.format_message(content)
+             # chat.update has postMessage's ~40k limit but cannot split, so truncate to fit
+@@ -2421,6 +2555,9 @@ class SlackAdapter(BasePlatformAdapter):
+ 
+     async def delete_message(self, chat_id: str, message_id: str) -> bool:
+         """Delete a bot message (used to clean up temporary progress bubbles)."""
++        denied = await self._authorize_client_reply_transport(chat_id, "edit")
++        if denied:
++            return False
+         if not self._app:
+             return False
+         try:
+@@ -2468,6 +2605,10 @@ class SlackAdapter(BasePlatformAdapter):
+         """Stream a frame via Slack's native streaming APIs.
+         First frame for a (chat, draft_id) starts the stream; later frames append the delta.
+         ``content`` is the full accumulated text (append-only within one text segment)."""
++        denied = await self._authorize_client_reply_transport(
++            chat_id, "draft", text=content, metadata=metadata)
++        if denied:
++            return denied
+         if not self._app:
+             return SendResult(success=False, error="Not connected")
+         if self._native_stream_unsupported:
+@@ -2538,6 +2679,8 @@ class SlackAdapter(BasePlatformAdapter):
+         a thread_ts (the gateway sets metadata.thread_id even for top-level messages, so a miss is
+         rare). Channels require recipient team/user; harmless for DMs."""
+         team_id, chat_id, thread_ts = stream_key
++        if self._client_reply_protected(chat_id):
++            return SendResult(success=False, error="client_reply_denied")
+         await self._seal_stale_streams()
+         start_kwargs: dict[str, Any] = {"channel": chat_id, "thread_ts": thread_ts}
+         md = metadata or {}
+@@ -2617,6 +2760,8 @@ class SlackAdapter(BasePlatformAdapter):
+         the final content (the API is append-only: ``stopStream.markdown_text`` APPENDS). Returns
+         True on success."""
+         team_id, chat_id, _ = key
++        if self._client_reply_protected(chat_id):
++            return False
+         try:
+             kwargs: dict[str, Any] = {"channel": chat_id, "ts": stream["ts"]}
+             if delta and delta.strip():
+@@ -2706,6 +2851,8 @@ class SlackAdapter(BasePlatformAdapter):
+     async def send_typing(self, chat_id: str, metadata=None) -> None:
+         """Show a thread status via assistant.threads.setStatus.
+         Needs assistant:write or chat:write scope; auto-clears on reply."""
++        if self._client_reply_protected(chat_id):
++            return
+         if self._suppressed_ignored(chat_id, "typing/status in", level=logging.DEBUG):
+             return
+         if not self._app:
+@@ -2749,6 +2896,8 @@ class SlackAdapter(BasePlatformAdapter):
+     async def _set_thread_status(
+         self, chat_id: str, team_id: str, thread_ts: str, status: str, fail_label: str) -> None:
+         """``assistant.threads.setStatus`` (empty ``status`` clears); failures are debug-logged."""
++        if self._client_reply_protected(chat_id):
++            return
+         try:
+             _set_status = _session_status_method(self._get_client(chat_id, team_id=team_id))
+             await _set_status(channel_id=chat_id, thread_ts=thread_ts, status=status)
+@@ -2768,6 +2917,11 @@ class SlackAdapter(BasePlatformAdapter):
+ 
+     async def stop_typing(self, chat_id: str, metadata=None) -> None:
+         """Clear the assistant thread status indicator."""
++        if self._client_reply_protected(chat_id):
++            for key in list(self._active_status_threads):
++                if key[1] == str(chat_id):
++                    self._active_status_threads.pop(key, None)
++            return
+         if self._suppressed_ignored(chat_id, "status clear in", level=logging.DEBUG):
+             self._active_status_threads.pop(chat_id, None)
+             return
+@@ -2907,6 +3061,10 @@ class SlackAdapter(BasePlatformAdapter):
+         content: Optional[bytes] = None, attempts: int = 3) -> SendResult:
+         """``files_upload_v2`` of a local path (or in-memory ``content``) with up to
+         ``attempts`` tries on transient errors; re-raises otherwise."""
++        denied = await self._authorize_client_reply_transport(
++            chat_id, "file", text=caption or "", file_path=file_path, metadata=metadata)
++        if denied:
++            return denied
+         source = {"file": file_path} if content is None else {"content": content}
+         for attempt in range(attempts):
+             try:
+@@ -2963,6 +3121,10 @@ class SlackAdapter(BasePlatformAdapter):
+         call, Slack cap) instead of N posts; falls back to the base per-image loop on failure."""
+         if self._suppressed_ignored(chat_id, "multi-image upload in"):
+             return SendResult(success=False, error="ignored_channel")
++        denied = await self._authorize_client_reply_transport(
++            chat_id, "file", metadata=metadata)
++        if denied:
++            return denied
+         if not self._app:
+             return SendResult(success=False, error="Not connected")
+         if not images:
+@@ -3221,6 +3383,8 @@ class SlackAdapter(BasePlatformAdapter):
+         self, channel: str, timestamp: str, emoji: str, team_id: str, *, remove: bool) -> bool:
+         """reactions.add / reactions.remove; True on success. Failures (already reacted,
+         missing scope) are debug-logged only."""
++        if self._client_reply_protected(channel):
++            return False
+         if not self._app:
+             return False
+         try:
+@@ -3495,6 +3659,11 @@ class SlackAdapter(BasePlatformAdapter):
+         reply_to: Optional[str] = None, metadata: Optional[dict[str, Any]] = None, **kwargs,
+     ) -> SendResult:
+         """Send an audio file to Slack."""
++        denied = await self._authorize_client_reply_transport(
++            chat_id, "audio", text=caption or "", file_path=audio_path,
++            metadata=metadata)
++        if denied:
++            return denied
+         try:
+             return await self._upload_file(chat_id, audio_path, caption, reply_to, metadata)
+         except FileNotFoundError:
+@@ -3697,6 +3866,8 @@ class SlackAdapter(BasePlatformAdapter):
+     async def _set_assistant_suggested_prompts(
+         self, channel_id: str, *, team_id: str = "", thread_ts: str = "") -> None:
+         """Best-effort Slack AI suggested prompts setup."""
++        if self._client_reply_protected(channel_id):
++            return
+         if not self._app or not channel_id:
+             return
+         title, prompts = self._assistant_suggested_prompts()
+@@ -3720,6 +3891,8 @@ class SlackAdapter(BasePlatformAdapter):
+     async def _set_assistant_thread_title(
+         self, channel_id: str, thread_ts: str, title_source: str, *, team_id: str = "") -> None:
+         """Best-effort title for visible Slack AI DM threads."""
++        if self._client_reply_protected(channel_id):
++            return
+         if (
+             not self._app or not channel_id or not thread_ts or not title_source
+             or not self._assistant_thread_title_enabled()):
+@@ -4022,7 +4195,10 @@ class SlackAdapter(BasePlatformAdapter):
+         # Let the normal message.file_share event arrive first; if it did,
+         # its share ts is already recorded and this fallback skips.
+         await asyncio.sleep(0.75)
+-        if ts and self._dedup.is_duplicate(self._workspace_event_id(team_id, ts)):
++        share_event = {"channel": channel_id, "thread_ts": thread_ts, "ts": ts,
++                       "channel_type": "im" if channel_id.startswith("D") else "channel"}
++        if ts and self._dedup.contains(
++            self._inbound_message_dedup_id(share_event, team_id, ts)):
+             return
+         fallback_event = {
+             "type": "message",
+@@ -4032,7 +4208,7 @@ class SlackAdapter(BasePlatformAdapter):
+             "channel": channel_id,
+             "channel_type": "im" if channel_id.startswith("D") else "channel",
+             "team": team_id,
+-            "ts": "",  # already recorded above; avoid tripping our own dedup guard
++            "ts": ts,
+             "files": [file_obj]}
+         if thread_ts and thread_ts != ts:
+             fallback_event["thread_ts"] = thread_ts
+@@ -4476,14 +4652,7 @@ class SlackAdapter(BasePlatformAdapter):
+             event = self._normalize_changed_message(event)
+             if event is None:
+                 return None
+-        # Socket Mode redelivers after reconnects. Scope by workspace: ts is only unique per team.
+-        # Dedup: Slack Socket Mode can redeliver events after reconnects (#4777) Scope the dedup id by
+-        # workspace: Slack event ts values are only unique within one workspace, so two teams' events with
+-        # the same ts must not suppress each other.
+-        event_ts = event.get("_slack_changed_event_ts") or event.get("ts", "")
+         dedup_team_id = self._event_team_id(event, payload)
+-        if event_ts and self._dedup.is_duplicate(self._workspace_event_id(dedup_team_id, event_ts)):
+-            return None
+         channel_id = event.get("channel", "")
+         if self._is_ignored_channel(channel_id):
+             logger.info("[Slack] Ignoring message in configured ignored channel %s", channel_id)
+@@ -4630,6 +4799,12 @@ class SlackAdapter(BasePlatformAdapter):
+             event_thread_ts=event_thread_ts, user_id=user_id, team_id=team_id, is_dm=is_dm,
+             force_process=force_process)):
+             return
++        # Mark only a copy that passed routing. A Slack Connect copy without
++        # this workspace's mention must not suppress the addressed copy.
++        event_ts = event.get("_slack_changed_event_ts") or event.get("ts", "")
++        if event_ts and self._dedup.is_duplicate(
++            self._inbound_message_dedup_id(event, team_id, event_ts)):
++            return
+         # Claim the message ts HERE: a link unfurl emits `message_changed` with a different event
+         # ts, so only the `_processed_message_ts` guard stops a duplicate turn, and it must be set
+         # before the slow enrichment awaits. Claiming before the filters would let an ignored
+@@ -4894,6 +5069,10 @@ class SlackAdapter(BasePlatformAdapter):
+         self, chat_id: str, text: str, blocks: list, metadata: Optional[dict[str, Any]], *,
+         sanitize: bool = True, team_scoped: bool = True):
+         """chat.postMessage with ``blocks`` (threaded via metadata); returns the raw response."""
++        denied = await self._authorize_client_reply_transport(
++            chat_id, "draft", text=text, metadata=metadata)
++        if denied:
++            raise RuntimeError(denied.error or "client_reply_denied")
+         kwargs: dict[str, Any] = {
+             "channel": chat_id, "text": text,
+             "blocks": sanitize_blocks(blocks) if sanitize else blocks}
+@@ -5132,6 +5311,10 @@ class SlackAdapter(BasePlatformAdapter):
+         ``_handle_model_picker_action``, which calls ``on_model_selected`` on
+         a model choice.
+         """
++        denied = await self._authorize_client_reply_transport(
++            chat_id, "draft", metadata=metadata)
++        if denied:
++            return denied
+         if not self._app:
+             return SendResult(success=False, error="Not connected")
+ 
+@@ -5200,6 +5383,11 @@ class SlackAdapter(BasePlatformAdapter):
+         section_text: str,
+     ) -> None:
+         """Replace the picker message body with a plain section (no controls)."""
++        denied = await self._authorize_client_reply_transport(
++            channel_id, "edit", text=section_text,
++            metadata={"slack_team_id": team_id})
++        if denied:
++            return
+         try:
+             await self._get_client(channel_id, team_id=team_id or None).chat_update(
+                 channel=channel_id,
+@@ -5226,6 +5414,10 @@ class SlackAdapter(BasePlatformAdapter):
+         message = body.get("message", {})
+         msg_ts = message.get("ts", "")
+         channel_id = body.get("channel", {}).get("id", "")
++        denied = await self._authorize_client_reply_transport(
++            channel_id, "edit", metadata={"slack_team_id": team_id})
++        if denied:
++            return
+         user_name = body.get("user", {}).get("name", "unknown")
+         user_id = body.get("user", {}).get("id", "")
+ 
+@@ -5545,6 +5737,11 @@ class SlackAdapter(BasePlatformAdapter):
+         self, channel_id: str, msg_ts: str, original_text: str, decision_text: str,
+         placeholder: str, label: str, team_id: Optional[str] = None, sanitize: bool = True) -> None:
+         """Rewrite a button prompt to show the outcome and drop the buttons."""
++        denied = await self._authorize_client_reply_transport(
++            channel_id, "edit", text=decision_text,
++            metadata={"slack_team_id": team_id} if team_id else None)
++        if denied:
++            return
+         updated_blocks = [
+             {"type": "section", "text": {"type": "mrkdwn", "text": original_text or placeholder}},
+             {"type": "context", "elements": [{"type": "mrkdwn", "text": decision_text}]}]
+@@ -5589,6 +5786,11 @@ class SlackAdapter(BasePlatformAdapter):
+             from tools import slash_confirm as _slash_confirm_mod
+             result_text = await _slash_confirm_mod.resolve(session_key, confirm_id, choice)
+             if result_text:
++                denied = await self._authorize_client_reply_transport(
++                    channel_id, "draft", text=result_text,
++                    metadata={"slack_team_id": team_id})
++                if denied:
++                    return
+                 post_kwargs: dict[str, Any] = {"channel": channel_id, "text": result_text}
+                 thread_ts = message.get("thread_ts") or msg_ts  # stay in the same thread
+                 if thread_ts:
+@@ -6740,6 +6942,13 @@ async def _standalone_send(
+     caption=None):
+     """Out-of-process delivery (``standalone_sender_fn``) for cron/tool processes not co-located
+     with the gateway: text via ``chat.postMessage`` (aiohttp), media via ``files_upload_v2``."""
++    from gateway.client_reply_gate import CLIENT_CHANNEL_IDS, authorize_slack_egress
++    if str(chat_id or "") in CLIENT_CHANNEL_IDS:
++        # Standalone sends have no final-reply permit or inbound message identity.
++        decision = await authorize_slack_egress(
++            channel_id=str(chat_id), bot_id="", operation="text",
++            text=message or "", metadata=None)
++        return send_error(decision.reason or "client_reply_denied")
+     del force_document  # signature parity with other standalone senders
+     media_files = media_files or []
+     # Under multiplex os.environ may hold ANOTHER profile's token: read via the secret scope.
