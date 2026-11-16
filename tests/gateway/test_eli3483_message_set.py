@@ -39,7 +39,8 @@ def test_message_set_preserves_known_and_unknown_source_fields():
     assert all(row["source"]["reply_anchor_ts"] == row["thread_parent"] for row in MESSAGES)
     assert all(row["source"]["attachment_metadata"] is None for row in MESSAGES)
     assert MESSAGES[0]["source"]["observed_delivery_team_ids"] == ["T09KH5NV5SA", "T0BQMT61XHR"]
-    assert MESSAGES[3]["source"]["user_id"] is None
+    assert MESSAGES[3]["source"]["user_id"] == "U09KT2Z9YN7"
+    assert MESSAGES[6]["source"]["user_id"] == "U0C5CMDLB2P"
     assert MESSAGES[6]["source"]["routing_id"] is None
 
 
