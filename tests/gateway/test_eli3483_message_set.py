@@ -1,7 +1,9 @@
 """Offline safety check for the eight captured client messages, without model or Slack I/O.
 
-This is a message set, not the required answer-quality replay. The original
-sessions do not provide successful current-turn tool evidence for seven cases.
+This is a message set, not the required answer-quality replay. The prompt is
+a hand-written sample; this test does not load the live SOUL, skills or channel
+overrides and does not call the Slack adapter. Seven original sessions have no
+recorded tool-result rows.
 """
 
 import json
@@ -19,7 +21,7 @@ from gateway.session import SessionSource
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "eli3483_client_messages.json").read_text())
 MESSAGES = FIXTURE["messages"]
-LIVE_CHANNEL_PROMPT = (
+SAMPLE_CHANNEL_PROMPT = (
     "CLIENT COMMUNICATION STANDARD. Answer the actual question first in everyday words. "
     "One natural reply, usually 1-3 short sentences. More detail only when asked, still plain English. "
     "Say only the verified result, what is not finished, and any genuinely necessary client action. "
@@ -54,14 +56,14 @@ def test_message_without_verified_handoff_cannot_reach_final_delivery(row):
     )
     assert source.chat_id in CLIENT_CHANNEL_IDS
     ctx = SimpleNamespace(
-        source=source, channel_prompt=LIVE_CHANNEL_PROMPT,
+        source=source, channel_prompt=SAMPLE_CHANNEL_PROMPT,
         inbound_message_id=row["message_ts"], client_message=row["text"],
         context_prompt="Legend profile context",
     )
     runner = SimpleNamespace(_ctx=ctx, _runner=SimpleNamespace(
         _get_system_prompt_for_channel=lambda *args, **kwargs: ""))
     prompt = TurnRunner._combined_ephemeral_prompt(runner)
-    assert LIVE_CHANNEL_PROMPT in prompt
+    assert SAMPLE_CHANNEL_PROMPT in prompt
     assert f'source_channel to "{row["channel_id"]}"' in prompt
     assert f'inbound_ts to "{row["message_ts"]}"' in prompt
 

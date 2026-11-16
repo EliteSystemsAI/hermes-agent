@@ -1,9 +1,11 @@
-"""Opt-in, no-send egress safety replay on live Legend prompts plus PR 4 adapter.
+"""Opt-in, no-send safety checks using live Legend prompt files and PR 4 adapter.
 
 Run on a joint PR 2, PR 3 and PR 4 checkout with
 HERMES_TEST_SSH_HOST=hermes-cloud scripts/run_tests.sh
 tests/gateway/test_eli3483_live_adapter_replay.py -q.
-This does not call a model or prove answer quality.
+This reads SOUL and channel prompts, not the full skill stack. It does not call
+a model or pass a finalizer candidate into the adapter. It proves only that
+old prose fails the handoff check and a separate raw send fails at transport.
 """
 
 import hashlib
@@ -34,7 +36,7 @@ MESSAGES = json.loads((Path(__file__).parent / "fixtures" /
 
 
 @pytest.fixture(scope="module")
-def live_prompt_stack():
+def live_prompt_files():
     remote = '''
 import json
 from pathlib import Path
@@ -48,18 +50,16 @@ for line in config_lines:
         prefix = "    " + channel + ": "
         if line.startswith(prefix):
             prompts[channel] = line[len(prefix):]
-skills = sorted(str(p.relative_to(root)) for p in (root / "skills").glob("**/SKILL.md"))
-print(json.dumps({"soul": soul, "prompts": prompts, "skills": skills}))
+print(json.dumps({"soul": soul, "prompts": prompts}))
 '''
     proc = subprocess.run(
         ["ssh", "hermes-cloud", "docker exec -i --user hermes hermes python -"],
         input=remote, text=True, capture_output=True, check=True, timeout=20)
-    stack = json.loads(proc.stdout)
-    assert hashlib.sha256(stack["soul"].encode()).hexdigest() == (
+    files = json.loads(proc.stdout)
+    assert hashlib.sha256(files["soul"].encode()).hexdigest() == (
         "883f6c0228801dec651dcd655f80d8e85526fb9f06c0a0c39be84e4652ad04b2")
-    assert len(stack["prompts"]) == 4
-    assert stack["skills"] == []
-    return stack
+    assert len(files["prompts"]) == 4
+    return files
 
 
 @pytest.fixture
@@ -82,8 +82,9 @@ def no_send_adapter(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("row", MESSAGES, ids=[row["case"] for row in MESSAGES])
-async def test_old_unverified_answer_is_held_before_actual_adapter_send(no_send_adapter, live_prompt_stack, row):
-    """Read live prompt files, then prove no Slack API call for unsupported old prose."""
+async def test_old_prose_handoff_and_raw_adapter_send_fail_closed_separately(
+        no_send_adapter, live_prompt_files, row):
+    """Two safety checks; no model, successful tool result or finalizer-to-adapter delivery."""
     adapter, alerts = no_send_adapter
     source_meta = row["source"]
     # Two captured messages lack workspace and routing records. This assumed
@@ -93,7 +94,7 @@ async def test_old_unverified_answer_is_held_before_actual_adapter_send(no_send_
     adapter._team_bot_user_ids[team] = "U_LEGEND"
     event = MessageEvent(
         text=row["text"], message_id=row["message_ts"],
-        channel_prompt=live_prompt_stack["prompts"][row["channel_id"]],
+        channel_prompt=live_prompt_files["prompts"][row["channel_id"]],
         source=SessionSource(
             platform=Platform.SLACK, chat_id=row["channel_id"],
             chat_type=source_meta["chat_type"] or "group", scope_id=team,
@@ -104,9 +105,9 @@ async def test_old_unverified_answer_is_held_before_actual_adapter_send(no_send_
         inbound_message_id=event.message_id, client_message=event.text, context_prompt="")
     runner = SimpleNamespace(_ctx=ctx, _runner=SimpleNamespace(
         _get_system_prompt_for_channel=lambda *args, **kwargs: ""))
-    full_prompt = live_prompt_stack["soul"] + "\n\n" + TurnRunner._combined_ephemeral_prompt(runner)
-    assert event.channel_prompt in full_prompt
-    assert "CLIENT REPLY HANDOFF" in full_prompt
+    sample_concat = live_prompt_files["soul"] + "\n\n" + TurnRunner._combined_ephemeral_prompt(runner)
+    assert event.channel_prompt in sample_concat
+    assert "CLIENT REPLY HANDOFF" in sample_concat
 
     class NoModel:
         def _get_transport(self):
@@ -116,6 +117,7 @@ async def test_old_unverified_answer_is_held_before_actual_adapter_send(no_send_
         NoModel(), {"final_response": "Unverified old answer", "messages": []}, ctx, 0)
     assert final["failed"] and final["final_response"] == ""
     assert final["client_reply_finalizer_block"] == "missing_structured_handoff"
+    # This is deliberately a separate raw-send attempt, not finalizer output.
     result = await adapter.send(
         row["channel_id"], "Unverified old answer", metadata=_thread_metadata_for_event(event))
     assert not result.success
