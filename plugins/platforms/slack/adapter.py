@@ -5598,7 +5598,7 @@ class SlackAdapter(BasePlatformAdapter):
         # If it does, _handle_slack_message records the same share ts and this
         # fallback skips instead of duplicating the user turn.
         await asyncio.sleep(0.75)
-        if ts and self._dedup.is_duplicate(
+        if ts and self._dedup.contains(
             self._inbound_message_dedup_id(
                 {"channel": channel_id, "thread_ts": thread_ts,
                  "ts": ts, "channel_type": "im" if channel_id.startswith("D") else "channel"},
@@ -5614,7 +5614,7 @@ class SlackAdapter(BasePlatformAdapter):
             "channel": channel_id,
             "channel_type": "im" if channel_id.startswith("D") else "channel",
             "team": team_id,
-            "ts": "",  # already recorded above; avoid tripping our own dedup guard
+            "ts": ts,
             "files": [file_obj],
         }
         if thread_ts and thread_ts != ts:
@@ -5824,15 +5824,7 @@ class SlackAdapter(BasePlatformAdapter):
                 normalized_event["_slack_changed_event_ts"] = changed_event_ts
             event = normalized_event
 
-        # Dedup: Slack Socket Mode can redeliver events after reconnects (#4777)
-        # DMs keep workspace scope; shared-channel copies use the same
-        # channel/message identity across the two workspace deliveries.
-        event_ts = event.get("_slack_changed_event_ts") or event.get("ts", "")
         dedup_team_id = self._event_team_id(event, payload)
-        if event_ts and self._dedup.is_duplicate(
-            self._inbound_message_dedup_id(event, dedup_team_id, event_ts)
-        ):
-            return
 
         channel_id = event.get("channel", "")
         if self._is_ignored_channel(channel_id):
@@ -6255,6 +6247,14 @@ class SlackAdapter(BasePlatformAdapter):
                     chat_type="dm" if is_dm else "group",
                 ):
                     return
+
+        # Mark only a copy that passed routing. An unaddressed workspace copy
+        # must not suppress the copy that mentions this workspace's bot.
+        event_ts = event.get("_slack_changed_event_ts") or event.get("ts", "")
+        if event_ts and self._dedup.is_duplicate(
+            self._inbound_message_dedup_id(event, team_id, event_ts)
+        ):
+            return
 
         if is_mentioned:
             # Strip the bot mention from the text

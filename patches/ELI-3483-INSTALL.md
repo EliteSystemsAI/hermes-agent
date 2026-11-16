@@ -21,6 +21,7 @@ target=/opt/hermes/plugins/platforms/slack/adapter.py
 backup=/opt/data/adapter.py.bak-ELI-3483-v0.23.0
 stage=/opt/data/eli-3483-stage
 sha=19ff264f300a2e352f99df01b84d25b196a4f6e5852599f0403823b9922f2f47
+after=8cd9c51dcf03423b9a81049d8f2bda35405dd45bab1a405633eab64aeaa4d977
 
 ssh hermes-cloud 'docker exec -i -u hermes -e HOME=/opt/data hermes sh -lc "cd /opt/hermes && git apply --check -"' < "$patch"
 ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$sha  $target"
@@ -28,8 +29,10 @@ ssh hermes-cloud "docker exec hermes sh -ec 'test ! -e $backup && cp -p $target 
 ssh hermes-cloud "docker exec hermes sha256sum $backup" | grep -Fx "$sha  $backup"
 ssh hermes-cloud "docker exec -i -u hermes -e HOME=/opt/data hermes sh -ec 'test ! -e $stage && mkdir -p $stage/plugins/platforms/slack && cp $target $stage/plugins/platforms/slack/adapter.py && cd $stage && git apply -'" < "$patch"
 ssh hermes-cloud "docker exec -u hermes -e HOME=/opt/data hermes python -c 'import ast; ast.parse(open(\"$stage/plugins/platforms/slack/adapter.py\").read())'"
+ssh hermes-cloud "docker exec hermes sha256sum $stage/plugins/platforms/slack/adapter.py" | grep -Fx "$after  $stage/plugins/platforms/slack/adapter.py"
 ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$sha  $target"
 ssh hermes-cloud "docker exec hermes install -o root -g root -m 644 $stage/plugins/platforms/slack/adapter.py $target"
+ssh hermes-cloud "docker exec hermes sha256sum $target" | grep -Fx "$after  $target"
 ssh hermes-cloud 'docker exec -u hermes -e HOME=/opt/data hermes /opt/hermes/.venv/bin/python -c "import plugins.platforms.slack.adapter as a; assert hasattr(a.SlackAdapter, \"_inbound_message_dedup_id\"); print(a.__file__)"'
 ssh hermes-cloud 'docker exec -u hermes -e HOME=/opt/data hermes /opt/hermes/.venv/bin/hermes -p default gateway restart --detach'
 ssh hermes-cloud 'docker exec -u hermes -e HOME=/opt/data hermes /opt/hermes/.venv/bin/hermes -p default gateway status'

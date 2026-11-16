@@ -96,3 +96,59 @@ async def test_shared_message_with_distinct_workspace_bot_ids_runs_once(mentione
     )
 
     assert adapter.handle_message.await_count == 1
+
+
+@pytest.mark.parametrize("first_team", ["T_CLIENT", "T_ELITE"])
+@pytest.mark.asyncio
+async def test_one_workspace_mention_survives_both_orders(first_team):
+    adapter = SlackAdapter(PlatformConfig(
+        enabled=True, token="fake", extra={"require_mention": True}))
+    adapter._app = MagicMock()
+    adapter._app.client = AsyncMock()
+    adapter._bot_user_id = "U_ELITE_BOT"
+    adapter._team_bot_user_ids.update({
+        "T_ELITE": "U_ELITE_BOT", "T_CLIENT": "U_CLIENT_BOT"})
+    adapter._fetch_thread_context = AsyncMock(return_value=None)
+    adapter._fetch_thread_parent_text = AsyncMock(return_value="")
+    adapter.handle_message = AsyncMock()
+    copies = {
+        team: {**_message(team, "C_SHARED", "176.001", "170.000"),
+               "text": "<@U_ELITE_BOT> status?"}
+        for team in ("T_ELITE", "T_CLIENT")
+    }
+    await adapter._handle_slack_message(copies[first_team])
+    await adapter._handle_slack_message(copies[
+        "T_ELITE" if first_team == "T_CLIENT" else "T_CLIENT"])
+    assert adapter.handle_message.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_real_video_fallback_does_not_shadow_mentioned_message(monkeypatch):
+    adapter = SlackAdapter(PlatformConfig(
+        enabled=True, token="fake", extra={"require_mention": True}))
+    adapter._app = MagicMock()
+    adapter._app.client = AsyncMock()
+    adapter._bot_user_id = "U_ELITE_BOT"
+    adapter._team_bot_user_ids.update({
+        "T_ELITE": "U_ELITE_BOT", "T_CLIENT": "U_CLIENT_BOT"})
+    adapter._fetch_thread_context = AsyncMock(return_value=None)
+    adapter._fetch_thread_parent_text = AsyncMock(return_value="")
+    adapter._resolve_user_is_bot = AsyncMock(return_value=False)
+    adapter.handle_message = AsyncMock()
+    client = AsyncMock()
+    client.files_info.return_value = {
+        "ok": True,
+        "file": {"id": "F_SHARED", "mimetype": "video/mp4", "user": "U_CLIENT",
+                 "shares": {"public": {"C_SHARED": [
+                     {"ts": "177.001", "thread_ts": "170.000"}]}}},
+    }
+    adapter._team_clients["T_CLIENT"] = client
+    monkeypatch.setattr("plugins.platforms.slack.adapter.asyncio.sleep", AsyncMock())
+
+    await adapter._handle_slack_file_shared({
+        "channel_id": "C_SHARED", "file_id": "F_SHARED", "team_id": "T_CLIENT"})
+    assert adapter.handle_message.await_count == 0
+    mentioned = _message("T_ELITE", "C_SHARED", "177.001", "170.000")
+    mentioned.update({"text": "<@U_ELITE_BOT> video?", "subtype": "file_share"})
+    await adapter._handle_slack_message(mentioned)
+    assert adapter.handle_message.await_count == 1
