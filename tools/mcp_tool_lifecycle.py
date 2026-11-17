@@ -4,6 +4,7 @@ server shutdown and draining of the background MCP loop."""
 import logging
 import asyncio
 import os
+import threading
 import time
 from typing import Dict, Optional
 from hermes_cli.process_identity import is_owner_death_supervisor, release_process_groups
@@ -86,11 +87,39 @@ _NON_MCP_CHILD_CMDLINE_MARKERS: tuple[str, ...] = (
     "-dorg.eclipse.equinox.launcher", "eclipse.jdt.ls", "org.eclipse.equinox.launcher_",  # jdtls
 )
 
+# Local (ELI-2905, 17 Nov 2026): PIDs of children this process spawned for something else, chiefly
+# cron scripts (cron/scheduler_script._run_job_script registers each one for its whole run). They
+# are direct children of the gateway, so one started while an MCP stdio server connects lands in the
+# snapshot delta and used to be ledgered as that server's child; when the MCP session ended while
+# the script still ran, it was marked orphaned and the post-tick sweep killpg()'d the script's group
+# (exit -15 a few seconds after start). The start-time guard can't catch it: it is the same process.
+_non_mcp_child_lock = threading.Lock()
+_non_mcp_child_pids: set = set()
+
+
+def mark_non_mcp_child(pid: int) -> None:
+    """Record a child this process spawned that is not an MCP server (never ledgered or reaped)."""
+    with _non_mcp_child_lock:
+        _non_mcp_child_pids.add(int(pid))
+
+
+def unmark_non_mcp_child(pid: int) -> None:
+    with _non_mcp_child_lock:
+        _non_mcp_child_pids.discard(int(pid))
+
+
+def _is_non_mcp_child(pid: int) -> bool:
+    with _non_mcp_child_lock:
+        return pid in _non_mcp_child_pids
+
 
 def _filter_mcp_children(pids: set) -> set:
     """Drop non-MCP children from a PID snapshot delta. Tracking a stray child in _stdio_pgids
     is catastrophic if it lacks start_new_session: its pgid can be the TUI parent's, so the
     shutdown killpg() would kill the TUI itself."""
+    if not pids:
+        return pids
+    pids = {pid for pid in pids if not _is_non_mcp_child(pid)}  # cron scripts and the like, always
     if not pids:
         return pids
     try:
@@ -263,6 +292,17 @@ def _take_reapable_pids(include_active: bool, server_name: Optional[str]) -> tup
                 _stdio_pids.pop(pid, None)
         pgids = {pid: _stdio_pgids.pop(pid) for pid in pids if pid in _stdio_pgids}
         starts = {pid: _stdio_starttimes.pop(pid) for pid in pids if pid in _stdio_starttimes}
+    # A registered non-MCP child (a running cron script) that slipped into the ledger is dropped
+    # here, never signalled: its group is the script's own.
+    dropped = []
+    for pid in [p for p in pids if _is_non_mcp_child(p)]:
+        logger.warning("MCP sweep: pid %d is a registered non-MCP child (cron script); not signalling it", pid)
+        pids.pop(pid, None)
+        starts.pop(pid, None)
+        if pid in pgids:
+            dropped.append(pgids.pop(pid))
+    if dropped:
+        release_process_groups(dropped)  # nor may the parent-death supervisor kill it later
     return pids, pgids, starts
 
 

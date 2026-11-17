@@ -352,7 +352,14 @@ class MCPServerTransportMixin:
             for pid in new_pids:
                 _stdio_pids.pop(pid, None)
                 # Windows-safe pid probe; the child may be gone while descendants remain in its pgroup.
-                if _pid_exists(pid) or _pgroup_alive(_stdio_pgids.get(pid)):
+                # A registered non-MCP child (a cron script that raced into the spawn delta) is
+                # never marked orphaned: the sweep would killpg() the script (ELI-2905).
+                if _lifecycle._is_non_mcp_child(pid):
+                    dropped = _stdio_pgids.pop(pid, None)
+                    if dropped is not None:
+                        released_pgids.append(dropped)
+                    _stdio_starttimes.pop(pid, None)
+                elif _pid_exists(pid) or _pgroup_alive(_stdio_pgids.get(pid)):
                     _orphan_stdio_pids.add(pid)
                     _orphan_stdio_pid_servers[pid] = self.name
                 else:  # nothing to reap — drop the pgid so PID reuse can't surface stale pgroup state
