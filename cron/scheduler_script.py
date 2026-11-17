@@ -552,6 +552,24 @@ def _start_heartbeat_thread(loop_fn, name: str, fail_log) -> Optional[threading.
     return thread
 
 
+# Local (ELI-2905 follow-up, 17 Nov 2026): a script killed by an outside SIGTERM moments after it
+# starts is retried once, but only for jobs listed in <cron dir>/retry_on_sigterm.txt (one job id
+# per line, '#' comments). The scheduler's own timeout and cancel never produce this message.
+_SIGTERM_FAILURE = "Script exited with code -15"
+_SIGTERM_RETRY_WINDOW_SECONDS = 15.0
+
+
+def _sigterm_retry_allowed(job_id: str) -> bool:
+    if not job_id:
+        return False
+    try:
+        from cron.jobs import CRON_DIR
+        lines = (Path(CRON_DIR) / "retry_on_sigterm.txt").read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return False
+    return job_id in {line.split("#", 1)[0].strip() for line in lines}
+
+
 def _run_job_script_with_claim_heartbeat(
     job: dict, script_path: str, workdir: Optional[str] = None,
     cancel_event: Optional[_CancelEventLike] = None,
@@ -560,9 +578,22 @@ def _run_job_script_with_claim_heartbeat(
     the stale-claim TTL; without a heartbeat another scheduler would re-dispatch the one-shot.
     Recurring/unclaimed runs have no durable claim → no thread. The owner is captured from the
     dispatched job, never re-read, so a stale runner cannot extend a replacement owner's claim."""
-    def run() -> tuple[bool, str]:
+    def run_once() -> tuple[bool, str]:
         return _run_job_script(script_path, workdir=workdir, cancel_event=cancel_event,
                                interpreter=job.get("interpreter"))
+
+    def run() -> tuple[bool, str]:
+        started = time.monotonic()
+        ok, output = run_once()
+        elapsed = time.monotonic() - started
+        if (not ok and str(output).split("\n", 1)[0] == _SIGTERM_FAILURE
+                and elapsed < _SIGTERM_RETRY_WINDOW_SECONDS
+                and not (cancel_event is not None and cancel_event.is_set())
+                and _sigterm_retry_allowed(str(job.get("id") or ""))):
+            logger.warning("Job '%s': script got an outside SIGTERM %.1fs after start; retrying once",
+                           job.get("id"), elapsed)
+            ok, output = run_once()
+        return ok, output
 
     schedule = job.get("schedule")
     claim = job.get("run_claim")
