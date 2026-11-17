@@ -448,6 +448,7 @@ def _run_job_script(
     if path is None:
         return False, err
     script_timeout = _get_script_timeout()
+    proc = None
     try:
         argv, env_overlay, err = _script_argv(path, interpreter)
         if argv is None:
@@ -488,6 +489,7 @@ def _run_job_script(
         proc = subprocess.Popen(
             argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=workdir or str(path.parent), env=env, **popen_kwargs)
+        _mark_cron_script_child(proc.pid)  # so an MCP spawn racing this one never adopts it (ELI-2905)
         deadline = time.monotonic() + script_timeout
         while True:
             # Tree-kill on cancel AND timeout: killpg misses setsid grandchildren (watchdogs,
@@ -536,6 +538,27 @@ def _run_job_script(
         return True, stdout
     except Exception as exc:
         return False, f"Script execution failed: {exc}"
+    finally:
+        if proc is not None:
+            _unmark_cron_script_child(proc.pid)
+
+
+def _mark_cron_script_child(pid: int) -> None:
+    """Register a running cron script with the MCP lifecycle as a non-MCP child (best-effort:
+    a cron run must never fail because the MCP module can't be imported)."""
+    try:
+        from tools.mcp_tool_lifecycle import mark_non_mcp_child
+        mark_non_mcp_child(pid)
+    except Exception:
+        logger.debug("could not register cron script pid %s as a non-MCP child", pid, exc_info=True)
+
+
+def _unmark_cron_script_child(pid: int) -> None:
+    try:
+        from tools.mcp_tool_lifecycle import unmark_non_mcp_child
+        unmark_non_mcp_child(pid)
+    except Exception:
+        logger.debug("could not unregister cron script pid %s", pid, exc_info=True)
 
 
 def _start_heartbeat_thread(loop_fn, name: str, fail_log) -> Optional[threading.Thread]:
